@@ -204,10 +204,10 @@ jobs:
       - name: Show Rust target
         run: rustc -vV
          
-        - name: Show Clang version
+      - name: Show Clang version
         run: clang --version
          
-        - name: Show INCLUDE
+      - name: Show INCLUDE
         shell: pwsh
         run: echo $env:INCLUDE
 
