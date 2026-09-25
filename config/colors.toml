@@ -1,0 +1,42 @@
+# Default series colors. Edit these RGB values to change the palette.
+# Indexes wrap, so a dashboard can hold more series than there are entries.
+
+[[palette]]
+r = 80
+g = 200
+b = 255
+
+[[palette]]
+r = 255
+g = 176
+b = 46
+
+[[palette]]
+r = 126
+g = 217
+b = 87
+
+[[palette]]
+r = 255
+g = 107
+b = 129
+
+[[palette]]
+r = 179
+g = 157
+b = 255
+
+[[palette]]
+r = 255
+g = 140
+b = 66
+
+[[palette]]
+r = 72
+g = 219
+b = 197
+
+[[palette]]
+r = 255
+g = 214
+b = 102

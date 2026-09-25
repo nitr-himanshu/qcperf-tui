@@ -1,0 +1,9 @@
+# Link with the same compilers libqcperf uses. Both binaries must be on PATH.
+# Android: the NDK's toolchain bin directory (host triple varies).
+# Linux: the ARM GNU toolchain bin directory that contains aarch64-none-linux-gnu-gcc.
+
+[target.aarch64-unknown-linux-gnu]
+linker = "aarch64-none-linux-gnu-gcc"
+
+[target.aarch64-linux-android]
+linker = "aarch64-linux-android29-clang"
