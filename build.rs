@@ -21,6 +21,7 @@ fn main() {
     let qcperf_root = manifest_dir.join("third_party").join("libqcperf");
     let source = qcperf_root.join("qcperf");
 
+    
     println!("cargo:rerun-if-changed={}", source.display());
     println!("cargo:rerun-if-env-changed=QCPERF_BACKENDS");
     println!("cargo:rerun-if-env-changed=AARCH64_TOOLCHAIN_PATH");
@@ -297,6 +298,7 @@ struct QcPerfVersionInfo {
         ))
         .clang_arg("--target=aarch64-pc-windows-msvc")
         .clang_arg("-fms-extensions")
+        .clang_arg("-fms-compatibility")
         .clang_arg("-fdeclspec");
     for arg in host_clang_args() {
         builder = builder.clang_arg(arg);

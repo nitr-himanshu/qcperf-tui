@@ -201,6 +201,16 @@ jobs:
           path: ${{ steps.package.outputs.archive }}
           retention-days: 7
 
+      - name: Show Rust target
+        run: rustc -vV
+         
+        - name: Show Clang version
+        run: clang --version
+         
+        - name: Show INCLUDE
+        shell: pwsh
+        run: echo $env:INCLUDE
+
   publish:
     name: Publish GitHub Release
     needs: [linux-arm-gnu, windows-arm64]
