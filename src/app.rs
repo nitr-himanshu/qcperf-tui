@@ -429,7 +429,7 @@ impl App {
 
     fn write_csv(&self, dashboard: &Dashboard, only: Option<&[Sample]>) -> Result<std::path::PathBuf> {
         let path = self.csv_path(&dashboard.name);
-        let rows = if let Some(batch) = only {
+        let rows: Vec<String> = if let Some(batch) = only {
             batch
                 .iter()
                 .filter(|sample| {
