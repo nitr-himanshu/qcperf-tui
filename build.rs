@@ -16,7 +16,7 @@ use std::process::Command;
 
 fn main() {
     let target = env::var("TARGET").expect("TARGET");
-    let manifest_dir = PathBuf::from(env::var("MANIFEST_DIR").expect("MANIFEST_DIR"));
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
     let qcperf_root = manifest_dir.join("third_party").join("libqcperf");
     let source = qcperf_root.join("qcperf");
