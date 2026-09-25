@@ -294,7 +294,12 @@ struct QcPerfVersionInfo {
         .clang_arg(format!(
             "-I{}",
             source.join("backends").join("inc").display()
-        ));
+        ))
+        .clang_arg("--target=aarch64-pc-windows-msvc")
+        .clang_arg("-fms-extensions")
+        .clang_arg("-fdeclspec")
+        .clang_arg(format!("-I{}", msvc_include))
+        .clang_arg(format!("-I{}", windows_sdk_include));
     for arg in host_clang_args() {
         builder = builder.clang_arg(arg);
     }
