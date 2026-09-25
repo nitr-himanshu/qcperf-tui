@@ -1,14 +1,16 @@
-use std::io::{self, Stdout};
+use std::io::{self, IsTerminal, Write};
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, SystemTime};
 
+use crossterm::cursor::Show;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use ratatui::backend::CrosstermBackend;
-use ratatui::Terminal;
+use ratatui::layout::Rect;
+use ratatui::{Terminal, TerminalOptions, Viewport};
 
 use crate::backend::{try_recv, BridgeEvent, QcPerf, SessionTable};
 use crate::error::Result;
@@ -86,28 +88,48 @@ impl App {
     }
 
     pub fn run(mut self) -> Result<()> {
-        enable_raw_mode()?;
-        let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen)?;
-        let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
-        let result = self.event_loop(&mut terminal);
-        disable_raw_mode()?;
-        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+        let mut restore = TerminalRestore::arm()?;
+        let result = self.drive(&mut restore);
+        restore.restore_if_armed();
         self.shutdown();
+        result
+    }
+
+    fn drive(&mut self, restore: &mut TerminalRestore) -> Result<()> {
+        let mut writer = terminal_writer()?;
+        enter_screen(&mut writer, restore.alternate)?;
+        let area = current_drawing_area();
+        let mut terminal = Terminal::with_options(
+            CrosstermBackend::new(writer),
+            TerminalOptions {
+                viewport: Viewport::Fixed(area),
+            },
+        )?;
+        let result = self.event_loop(&mut terminal, area);
+        leave_screen(terminal.backend_mut(), restore.alternate)?;
+        restore.disarm();
         result
     }
 
     fn event_loop(
         &mut self,
-        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+        terminal: &mut Terminal<CrosstermBackend<Box<dyn Write + Send>>>,
+        mut area: Rect,
     ) -> Result<()> {
         loop {
+            area = sync_viewport(terminal, area, None)?;
             terminal.draw(|frame| ui::draw(frame, self))?;
             if event::poll(Duration::from_millis(50))? {
-                if let Event::Key(key) = event::read()? {
-                    if key.kind == KeyEventKind::Press && self.handle_key(key) {
-                        return Ok(());
+                match event::read()? {
+                    Event::Key(key) => {
+                        if key.kind == KeyEventKind::Press && self.handle_key(key) {
+                            return Ok(());
+                        }
                     }
+                    Event::Resize(width, height) => {
+                        area = sync_viewport(terminal, area, Some((width, height)))?;
+                    }
+                    _ => {}
                 }
             }
             self.drain_events();
@@ -544,5 +566,173 @@ impl Drop for App {
         if self.qc.is_some() {
             self.shutdown();
         }
+    }
+}
+
+/// Restores raw mode and the cursor if terminal setup fails before [`App::drive`] finishes.
+struct TerminalRestore {
+    armed: bool,
+    /// Windows keeps the alternate screen. Unix paints the primary screen.
+    alternate: bool,
+}
+
+impl TerminalRestore {
+    fn arm() -> Result<Self> {
+        enable_raw_mode()?;
+        Ok(Self {
+            armed: true,
+            alternate: cfg!(windows),
+        })
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+
+    fn restore_if_armed(&mut self) {
+        if !self.armed {
+            return;
+        }
+        self.armed = false;
+        if let Ok(mut writer) = terminal_writer() {
+            let _ = leave_screen(&mut writer, self.alternate);
+        } else {
+            let _ = disable_raw_mode();
+        }
+    }
+}
+
+impl Drop for TerminalRestore {
+    fn drop(&mut self) {
+        self.restore_if_armed();
+    }
+}
+
+fn terminal_writer() -> io::Result<Box<dyn Write + Send>> {
+    let stdout = io::stdout();
+    if stdout.is_terminal() {
+        return Ok(Box::new(stdout));
+    }
+    #[cfg(unix)]
+    {
+        let tty = std::fs::OpenOptions::new().write(true).open("/dev/tty")?;
+        return Ok(Box::new(tty));
+    }
+    #[cfg(not(unix))]
+    {
+        Ok(Box::new(stdout))
+    }
+}
+
+fn enter_screen(writer: &mut impl Write, alternate: bool) -> io::Result<()> {
+    if alternate {
+        execute!(writer, EnterAlternateScreen)?;
+    } else {
+        execute!(writer, Clear(ClearType::All))?;
+    }
+    Ok(())
+}
+
+fn leave_screen(writer: &mut impl Write, alternate: bool) -> io::Result<()> {
+    let drawn = if alternate {
+        execute!(writer, LeaveAlternateScreen, Show)
+    } else {
+        execute!(writer, Show)
+    };
+    let raw = disable_raw_mode();
+    drawn?;
+    raw
+}
+
+fn current_drawing_area() -> Rect {
+    let measured = crossterm::terminal::size().unwrap_or((0, 0));
+    drawing_area(measured, env_u16("COLUMNS"), env_u16("LINES"))
+}
+
+fn sync_viewport(
+    terminal: &mut Terminal<CrosstermBackend<Box<dyn Write + Send>>>,
+    current: Rect,
+    reported: Option<(u16, u16)>,
+) -> Result<Rect> {
+    let measured = match reported {
+        Some(size) => size,
+        None => crossterm::terminal::size().unwrap_or((0, 0)),
+    };
+    let Some(next) = positive_area(measured) else {
+        return Ok(current);
+    };
+    if next != current {
+        terminal.resize(next)?;
+    }
+    Ok(next)
+}
+
+fn positive_area(measured: (u16, u16)) -> Option<Rect> {
+    if measured.0 > 0 && measured.1 > 0 {
+        Some(Rect::new(0, 0, measured.0, measured.1))
+    } else {
+        None
+    }
+}
+
+/// Picks a non-zero viewport. A zero ioctl side uses `COLUMNS` / `LINES` when
+/// those are positive, then 80×24.
+fn drawing_area(measured: (u16, u16), columns: Option<u16>, lines: Option<u16>) -> Rect {
+    let width = if measured.0 > 0 {
+        measured.0
+    } else {
+        columns.filter(|value| *value > 0).unwrap_or(80)
+    };
+    let height = if measured.1 > 0 {
+        measured.1
+    } else {
+        lines.filter(|value| *value > 0).unwrap_or(24)
+    };
+    Rect::new(0, 0, width, height)
+}
+
+fn env_u16(name: &str) -> Option<u16> {
+    let value = std::env::var(name).ok()?;
+    let parsed = value.parse::<u16>().ok()?;
+    (parsed > 0).then_some(parsed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::drawing_area;
+    use ratatui::layout::Rect;
+
+    #[test]
+    fn zero_size_falls_back_to_80x24() {
+        assert_eq!(drawing_area((0, 0), None, None), Rect::new(0, 0, 80, 24));
+    }
+
+    #[test]
+    fn zero_size_uses_positive_env_dimensions() {
+        assert_eq!(
+            drawing_area((0, 0), Some(100), Some(50)),
+            Rect::new(0, 0, 100, 50)
+        );
+    }
+
+    #[test]
+    fn non_positive_env_dimensions_are_ignored() {
+        assert_eq!(drawing_area((0, 0), Some(0), None), Rect::new(0, 0, 80, 24));
+    }
+
+    #[test]
+    fn measured_size_is_kept() {
+        assert_eq!(
+            drawing_area((120, 40), Some(80), Some(24)),
+            Rect::new(0, 0, 120, 40)
+        );
+    }
+
+    #[test]
+    fn only_the_missing_side_falls_back() {
+        assert_eq!(
+            drawing_area((0, 40), Some(100), Some(10)),
+            Rect::new(0, 0, 100, 40)
+        );
     }
 }
