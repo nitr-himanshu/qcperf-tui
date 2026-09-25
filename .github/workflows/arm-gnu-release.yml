@@ -1,0 +1,151 @@
+name: ARM GNU release
+
+# Cross-compiles fastrpc, libqcperf, and qcperf-tui for Linux ARM64 with the
+# ARM GNU toolchain, then publishes a GitHub Release for the tag.
+#
+# Push any tag (for example v0.1.0.0), or run the workflow and pass an
+# existing tag.
+
+on:
+  push:
+    tags: ["*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and release
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  AARCH64_TOOLCHAIN_VERSION: "15.2.rel1"
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  linux-arm-gnu:
+    name: Build and release linux-aarch64
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install host build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            ninja-build \
+            pkg-config \
+            autoconf \
+            automake \
+            libtool \
+            clang \
+            libclang-dev \
+            curl \
+            xz-utils \
+            file
+
+      - name: Download ARM GNU toolchain
+        run: |
+          set -euo pipefail
+          url="https://developer.arm.com/-/media/Files/downloads/gnu/${AARCH64_TOOLCHAIN_VERSION}/binrel/arm-gnu-toolchain-${AARCH64_TOOLCHAIN_VERSION}-x86_64-aarch64-none-linux-gnu.tar.xz"
+          mkdir -p "${RUNNER_TEMP}/arm-gnu-toolchain"
+          curl -fL "${url}" -o /tmp/toolchain.tar.xz
+          tar -xJf /tmp/toolchain.tar.xz -C "${RUNNER_TEMP}/arm-gnu-toolchain" --strip-components=1
+          echo "AARCH64_TOOLCHAIN_PATH=${RUNNER_TEMP}/arm-gnu-toolchain" >> "${GITHUB_ENV}"
+          echo "${RUNNER_TEMP}/arm-gnu-toolchain/bin" >> "${GITHUB_PATH}"
+          "${RUNNER_TEMP}/arm-gnu-toolchain/bin/aarch64-none-linux-gnu-gcc" --version
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Resolve library version
+        id: version
+        run: |
+          set -euo pipefail
+          raw="${RELEASE_TAG#v}"
+          IFS='.' read -r -a parts <<< "${raw}"
+          while [ "${#parts[@]}" -lt 4 ]; do
+            parts+=("0")
+          done
+          echo "project_version=${parts[0]}.${parts[1]}.${parts[2]}.${parts[3]}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build fastrpc
+        working-directory: third_party/libqcperf
+        run: |
+          set -euo pipefail
+          chmod +x qcperf/ci/build-fastrpc.sh
+          qcperf/ci/build-fastrpc.sh \
+            "${AARCH64_TOOLCHAIN_PATH}/bin/aarch64-none-linux-gnu-gcc" \
+            "${AARCH64_TOOLCHAIN_PATH}/bin/aarch64-none-linux-gnu-ar" \
+            "${AARCH64_TOOLCHAIN_PATH}/bin/aarch64-none-linux-gnu-ranlib"
+          test -f qcperf/third-party/fastrpc/src/.libs/libcdsprpc.so
+
+      - name: Build libqcperf
+        working-directory: third_party/libqcperf
+        env:
+          PROJECT_VERSION: ${{ steps.version.outputs.project_version }}
+        run: |
+          set -euo pipefail
+          cmake -S qcperf -B build-linux-aarch64-release \
+            -DTARGET_ARCH=linux-aarch64 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DProjectVersion="${PROJECT_VERSION}" \
+            -DBUILD_SHARED=OFF
+          cmake --build build-linux-aarch64-release
+          test -f build-linux-aarch64-release/libqcperfCore.a
+
+      - name: Build qcperf-tui
+        run: |
+          set -euo pipefail
+          cargo build --release --target aarch64-unknown-linux-gnu
+          file target/aarch64-unknown-linux-gnu/release/qcperf-tui
+          file target/aarch64-unknown-linux-gnu/release/qcperf-tui | grep -q "ARM aarch64"
+
+      - name: Package release archive
+        id: package
+        run: |
+          set -euo pipefail
+          name="qcperf-tui-${RELEASE_TAG}-linux-aarch64"
+          stage="staging/${name}"
+          mkdir -p "${stage}"
+          cp target/aarch64-unknown-linux-gnu/release/qcperf-tui "${stage}/qcperf-tui"
+          cp third_party/libqcperf/build-linux-aarch64-release/libqcperfCore.a "${stage}/libqcperfCore.a"
+          cp third_party/libqcperf/qcperf/third-party/fastrpc/src/.libs/libcdsprpc.so "${stage}/libcdsprpc.so"
+          chmod 755 "${stage}/qcperf-tui"
+          tar -C staging -czf "${name}.tar.gz" "${name}"
+          echo "archive=${name}.tar.gz" >> "${GITHUB_OUTPUT}"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCHIVE: ${{ steps.package.outputs.archive }}
+        run: |
+          set -euo pipefail
+          notes=$(cat <<EOF
+          Linux ARM64 build of qcperf-tui for ${RELEASE_TAG}, cross-compiled with the ARM GNU toolchain ${AARCH64_TOOLCHAIN_VERSION}.
+
+          The archive contains:
+          - \`qcperf-tui\` — the terminal UI
+          - \`libqcperfCore.a\` — static libqcperf used by that build
+          - \`libcdsprpc.so\` — fastrpc library built for the NPU backend link
+
+          On device, if the NPU backend cannot find the system fastrpc library, set \`LD_LIBRARY_PATH\` to the directory that contains \`libcdsprpc.so\`.
+          EOF
+          )
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release upload "${RELEASE_TAG}" "${ARCHIVE}" --clobber
+          else
+            gh release create "${RELEASE_TAG}" "${ARCHIVE}" \
+              --title "${RELEASE_TAG}" \
+              --notes "${notes}"
+          fi

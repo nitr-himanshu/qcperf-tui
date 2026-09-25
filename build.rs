@@ -58,6 +58,9 @@ fn main() {
     }
     configure_and_build(&target, &source, &build_dir);
     link_static_libs(&target, &build_dir);
+    if target != "aarch64-pc-windows-msvc" {
+        link_fastrpc(&source);
+    }
 
     generate_bindings(&source, &out_dir);
     println!("cargo:rustc-cfg=qcperf_static");
@@ -120,6 +123,21 @@ fn configure_and_build(target: &str, source: &Path, build_dir: &Path) {
     if !status.success() {
         panic!("cmake build failed for libqcperf");
     }
+}
+
+fn link_fastrpc(source: &Path) {
+    let libs = source
+        .join("third-party")
+        .join("fastrpc")
+        .join("src")
+        .join(".libs");
+    let shared = libs.join("libcdsprpc.so");
+    if !shared.exists() {
+        return;
+    }
+    println!("cargo:rerun-if-changed={}", shared.display());
+    println!("cargo:rustc-link-search=native={}", libs.display());
+    println!("cargo:rustc-link-lib=dylib=cdsprpc");
 }
 
 fn ndk_path() -> PathBuf {
