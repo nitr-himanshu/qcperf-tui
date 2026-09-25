@@ -227,6 +227,31 @@ fn collect_static_libs(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// libclang parses these headers on the host. The ARM GNU `gcc` earlier on
+/// `PATH` makes it miss the host multiarch directory that provides
+/// `bits/libc-header-start.h`.
+fn host_clang_args() -> Vec<String> {
+    let host = env::var("HOST").unwrap_or_default();
+    let mut args = Vec::new();
+    if !host.is_empty() {
+        args.push(format!("--target={host}"));
+    }
+    let multiarch = if host.starts_with("x86_64") {
+        Some("x86_64-linux-gnu")
+    } else if host.starts_with("aarch64") {
+        Some("aarch64-linux-gnu")
+    } else {
+        None
+    };
+    if let Some(multiarch) = multiarch {
+        let include = PathBuf::from("/usr/include").join(multiarch);
+        if include.join("bits").join("libc-header-start.h").exists() {
+            args.push(format!("-I{}", include.display()));
+        }
+    }
+    args
+}
+
 fn generate_bindings(source: &Path, out_dir: &Path) {
     let include = out_dir.join("include");
     fs::create_dir_all(&include).expect("create bindgen include dir");
@@ -255,7 +280,7 @@ struct QcPerfVersionInfo {
     let wrapper = out_dir.join("wrapper.h");
     fs::write(&wrapper, "#include \"qcperf.h\"\n").expect("write wrapper.h");
 
-    let bindings = bindgen::Builder::default()
+    let mut builder = bindgen::Builder::default()
         .header(wrapper.to_string_lossy())
         .clang_arg("-DQCPERF_STATIC_LIBRARY")
         .clang_arg(format!("-I{}", include.display()))
@@ -263,7 +288,11 @@ struct QcPerfVersionInfo {
         .clang_arg(format!(
             "-I{}",
             source.join("backends").join("inc").display()
-        ))
+        ));
+    for arg in host_clang_args() {
+        builder = builder.clang_arg(arg);
+    }
+    let bindings = builder
         .allowlist_function("qcperf_.*")
         .allowlist_type("QcPerf.*")
         .allowlist_var("QC_PERF_.*")
