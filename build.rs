@@ -249,6 +249,12 @@ fn host_clang_args() -> Vec<String> {
             args.push(format!("-I{}", include.display()));
         }
     }
+    // A windows-msvc target enables MSVC compatibility. Clang then keeps
+    // forward-declared structs incomplete, and bindgen emits only `_address`.
+    if host.contains("windows") {
+        args.push("-fno-ms-compatibility".to_string());
+        args.push("-fno-ms-extensions".to_string());
+    }
     args
 }
 
