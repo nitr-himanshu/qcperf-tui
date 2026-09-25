@@ -96,7 +96,7 @@ fn configure_and_build(target: &str, source: &Path, build_dir: &Path) {
         }
         "aarch64-pc-windows-msvc" => {
             configure.arg("-G");
-            configure.arg("Visual Studio 17 2022");
+            configure.arg("Visual Studio 18 2026");
             configure.arg("-A");
             configure.arg("ARM64");
         }

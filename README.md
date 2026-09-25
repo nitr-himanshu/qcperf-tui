@@ -123,8 +123,8 @@ export LD_LIBRARY_PATH=/vendor/lib64
 
 From the [libqcperf Windows ARM64 instructions](third_party/libqcperf/README.md#windows-arm64-compilation):
 
-- Visual Studio 2022 with the MSVC ARM64 build tools
-- CMake generator `Visual Studio 17 2022`, platform `ARM64`
+- Visual Studio 2026 with the MSVC ARM64 build tools
+- CMake generator `Visual Studio 18 2026`, platform `ARM64`
 - Git submodules initialized recursively
 
 ## Compilation
@@ -161,7 +161,7 @@ Push it to the device and run it in a terminal there. The NPU backend still need
 
 ### Windows ARM64
 
-Use a Visual Studio 2022 developer shell that can see the ARM64 build tools, then:
+Use a Visual Studio 2026 developer shell that can see the ARM64 build tools, then:
 
 ```powershell
 cargo build --release --target aarch64-pc-windows-msvc
