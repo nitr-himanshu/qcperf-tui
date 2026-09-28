@@ -389,6 +389,10 @@ unsafe fn copy_samples(data: *mut bindings::QcPerfData) -> Option<Vec<Sample>> {
     }
     let rows = std::slice::from_raw_parts(data.metric_response, count);
     let mut samples = Vec::with_capacity(count);
+    #[cfg(windows)]
+    let capability_id = data.capability_id;
+    #[cfg(not(windows))]
+    let capability_id = data.capabilityId;
     for row in rows {
         let Some(value) = numeric_value(&row.metric_value) else {
             continue;
@@ -396,7 +400,7 @@ unsafe fn copy_samples(data: *mut bindings::QcPerfData) -> Option<Vec<Sample>> {
         samples.push(Sample {
             at: sample_time(row.timestamp),
             backend_id: data.backend_id,
-            capability_id: data.capabilityId,
+            capability_id,
             metric_id: row.metric_id,
             value,
         });
