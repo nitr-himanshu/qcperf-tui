@@ -252,6 +252,11 @@ fn host_clang_args() -> Vec<String> {
             args.push(format!("-I{}", include.display()));
         }
     }
+    // Keep Clang's MSVC extensions for the Windows SDK headers, but disable
+    // compatibility mode so bindgen emits the complete libqcperf structs.
+    if host.contains("windows") {
+        args.push("-fno-ms-compatibility".to_string());
+    }
     args
 }
 
@@ -294,7 +299,6 @@ struct QcPerfVersionInfo {
         ))
         .clang_arg("--target=aarch64-pc-windows-msvc")
         .clang_arg("-fms-extensions")
-        .clang_arg("-fms-compatibility")
         .clang_arg("-fdeclspec");
     for arg in host_clang_args() {
         builder = builder.clang_arg(arg);
