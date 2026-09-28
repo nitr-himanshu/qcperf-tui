@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 #[cfg(windows)]
 use std::ffi::c_char;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TryRecvError};
@@ -64,6 +65,7 @@ static EVENTS: Mutex<Option<SyncSender<BridgeEvent>>> = Mutex::new(None);
 
 pub struct QcPerf {
     connected: Vec<u8>,
+    active_requests: HashMap<(u8, u8), Box<bindings::QcPerfRequest>>,
     capabilities: Vec<Capability>,
     warnings: Vec<String>,
 }
@@ -90,6 +92,7 @@ impl QcPerf {
 
         let mut qc = Self {
             connected: Vec::new(),
+            active_requests: HashMap::new(),
             capabilities: Vec::new(),
             warnings: Vec::new(),
         };
@@ -150,22 +153,49 @@ impl QcPerf {
     }
 
     pub fn start(&mut self, rate: &CapabilityRate) -> Result<()> {
-        let mut request = request_from(rate);
-        let rc = unsafe { bindings::qcperf_start(backend_id(rate.backend_id), &mut request) };
-        check(rc)
+        let key = (rate.backend_id, rate.capability_id);
+        if let Some(active) = self.active_requests.get(&key) {
+            if active.streaming_rate == rate.streaming_rate_ms
+                && active.sampling_rate == rate.sampling_rate_ms
+            {
+                return Ok(());
+            }
+            return Err(Error::message(format!(
+                "backend {} capability {} is already active with different rates",
+                rate.backend_id, rate.capability_id
+            )));
+        }
+
+        // Some libqcperf backends keep this pointer for a worker thread. Keep
+        // the request at a stable address until stop() has joined that thread.
+        let mut request = Box::new(request_from(rate));
+        let rc = unsafe { bindings::qcperf_start(backend_id(rate.backend_id), request.as_mut()) };
+        check(rc)?;
+        self.active_requests.insert(key, request);
+        Ok(())
     }
 
     pub fn stop(&mut self, rate: &CapabilityRate) -> Result<()> {
-        let mut request = request_from(rate);
-        let rc = unsafe { bindings::qcperf_stop(backend_id(rate.backend_id), &mut request) };
-        check(rc)
+        let key = (rate.backend_id, rate.capability_id);
+        if let Some(request) = self.active_requests.get_mut(&key) {
+            let rc =
+                unsafe { bindings::qcperf_stop(backend_id(rate.backend_id), request.as_mut()) };
+            check(rc)?;
+            self.active_requests.remove(&key);
+            Ok(())
+        } else {
+            let mut request = request_from(rate);
+            let rc = unsafe { bindings::qcperf_stop(backend_id(rate.backend_id), &mut request) };
+            check(rc)
+        }
     }
 
     pub fn shutdown(self) -> Result<()> {
         let mut first_error = None;
         for id in self.connected.iter().rev() {
             let rc = unsafe { bindings::qcperf_disconnect_backend(backend_id(*id)) };
-            if rc != bindings::QcPerfReturnCode::QC_PERF_RETURN_CODE_SUCCESS && first_error.is_none()
+            if rc != bindings::QcPerfReturnCode::QC_PERF_RETURN_CODE_SUCCESS
+                && first_error.is_none()
             {
                 first_error = Some(error_from(rc));
             }
