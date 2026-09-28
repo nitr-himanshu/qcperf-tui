@@ -17,6 +17,7 @@ Live view
   e        edit metrics, chart, color, window, and rates
   Tab or Left/Right   switch dashboard (profiling keeps running)
   PageUp/PageDown     browse charts when the dashboard does not fit
+  Up to four chart panels are shown on each page
   c        write the current samples to CSV
   v        toggle appending CSV while this dashboard runs
   p        snapshot to JSON without stopping

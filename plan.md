@@ -290,7 +290,16 @@ Color-only and window-only edits apply immediately to a running dashboard. A rat
 | 60–119 | 2 |
 | >= 120 | 3 |
 
-Each cell shows the metric name, the latest value with its unit string, and the chart. A pie is the current value. When several percent metrics from one capability are selected together (for example per-core CPU), they share one pie with one slice each. Line and bar charts plot that metric’s ring across `window`. The axis label shows the window (for example `60s`) and the unit. Resizing redraws on the next frame.
+Show at most four chart panels on one page. Four panels use a balanced two-column grid when the terminal is wide enough, and stack on narrow terminals; smaller counts use the available width. The page capacity is based on terminal width and a minimum chart height, so narrow or short terminals show fewer charts and PageUp/PageDown browses the rest. Dashboard size stays independent from page size.
+
+Each cell shows the metric name, the latest finite value with its unit string, and the chart. Empty or invalid-only series say `no data`. Non-finite samples are omitted from plotted data and axis bounds, which always remain finite. A pie is the current value. When several percent metrics from one capability are selected together (for example per-core CPU), they share one pie with one slice each. Pie sectors use half-block pixels to keep the disc circular at terminal cell aspect ratios; the legend shows each slice’s share and reading. Line and bar charts plot that metric’s ring across `window`. The axis label shows the window (for example `60s`) and the unit. Resizing redraws on the next frame.
+
+### UI refinement and scaling plan
+
+1. **Make chart readings reliable.** Keep sample sanitization, finite axis bounds, explicit latest readings, and a clear empty state inside the chart widgets. This is the current fix for unusable ranges and blank-looking graphs.
+2. **Keep layouts predictable.** Compute page capacity and cell rectangles from the same width/height policy. Keep four as a named page limit; retain all selected charts in the dashboard and use paging for overflow. Keep the four-panel layout balanced instead of leaving a single chart on a second row.
+3. **Keep chart types replaceable.** Each chart widget owns its drawing and presentation, while `view.rs` supplies prepared metric labels, units, colors, windows, and samples. New chart types should join this dispatch and reuse the shared layout policy without adding backend-specific logic.
+4. **Refine presentation in small steps.** Once the readings and geometry are stable, improve consistent titles, legends, empty states, and color contrast across pie, line, and bar charts. Keep palette choices in the theme and keep layout thresholds and page limits centralized so later user-configurable density does not spread through the widgets.
 
 ### Charts
 

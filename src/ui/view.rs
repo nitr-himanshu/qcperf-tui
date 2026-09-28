@@ -7,7 +7,10 @@ use ratatui::Frame;
 use crate::model::unit::is_percent;
 use crate::model::{Capability, ChartKind, Dashboard, GraphSpec};
 use crate::theme::Theme;
-use crate::ui::widgets::{BarSeries, LineSeries, PieChart, PieSlice};
+use crate::ui::widgets::{format_value, BarSeries, LineSeries, PieChart, PieSlice};
+
+const MAX_CHARTS_PER_PAGE: usize = 4;
+const MIN_CHART_HEIGHT: usize = 8;
 
 struct Cell {
     kind: CellKind,
@@ -111,9 +114,9 @@ pub fn render(
     }
 }
 
-/// Keep each chart tall enough to show its title, axes, and useful plot area.
+/// Keep charts near eight rows tall when the terminal has enough space.
 pub fn page_capacity(width: u16, height: u16) -> usize {
-    columns(width) * (height as usize / 8).max(1)
+    (columns(width) * (height as usize / MIN_CHART_HEIGHT).max(1)).min(MAX_CHARTS_PER_PAGE)
 }
 
 pub fn chart_count(dashboard: &Dashboard) -> usize {
@@ -162,9 +165,16 @@ fn build_cells(
                 }
                 let (name, unit) = metric_text(capabilities, next);
                 let points = series.get(index).map(Vec::as_slice).unwrap_or(&[]);
-                let value = points.last().map(|(_, value)| *value).unwrap_or(0.0);
+                let latest = points
+                    .iter()
+                    .rev()
+                    .find_map(|(_, value)| value.is_finite().then_some(*value));
+                let value = latest.unwrap_or(0.0);
+                let label = latest
+                    .map(|value| format!("{name} {}{unit}", format_value(value)))
+                    .unwrap_or_else(|| format!("{name} no data"));
                 slices.push(PieSlice {
-                    label: format!("{name} {value:.1}{unit}"),
+                    label,
                     value,
                     color: theme.color(next.color.index),
                 });
@@ -238,7 +248,12 @@ pub fn columns(width: u16) -> usize {
 }
 
 fn grid_rects(area: Rect, count: usize) -> Vec<Rect> {
-    let cols = columns(area.width).min(count).max(1);
+    let preferred_columns = if count >= MAX_CHARTS_PER_PAGE {
+        columns(area.width).min(2)
+    } else {
+        columns(area.width)
+    };
+    let cols = preferred_columns.min(count).max(1);
     let rows = count.div_ceil(cols);
     let col_constraints = equal_constraints(cols);
     let row_constraints = equal_constraints(rows);
