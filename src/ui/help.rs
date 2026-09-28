@@ -4,7 +4,8 @@ use ratatui::Frame;
 
 const HELP: &str = "\
 Dashboards
-  Up/Down  select
+  Up/Down or Left/Right  select
+  Tab      next dashboard
   Enter    open
   n        new dashboard
   d        delete a stopped dashboard
@@ -15,6 +16,7 @@ Live view
   x        stop this dashboard only
   e        edit metrics, chart, color, window, and rates
   Tab or Left/Right   switch dashboard (profiling keeps running)
+  PageUp/PageDown     browse charts when the dashboard does not fit
   c        write the current samples to CSV
   v        toggle appending CSV while this dashboard runs
   p        snapshot to JSON without stopping
@@ -22,6 +24,7 @@ Live view
   q        quit
 
 Editor
+  Up/Down  move focus through metrics
   Space    toggle the focused metric
   t        cycle chart (pie, line, bar)
   c        next color

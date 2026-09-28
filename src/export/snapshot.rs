@@ -36,6 +36,8 @@ struct RateSnap {
 
 #[derive(Serialize)]
 struct SeriesSnap {
+    backend_id: u8,
+    capability_id: u8,
     metric_id: u16,
     metric_name: String,
     unit: String,
@@ -52,7 +54,7 @@ pub fn write_snapshot(
     paths: &Paths,
     capabilities: &[Capability],
     dashboard: &Dashboard,
-    points: &[(u16, Vec<(SystemTime, f64)>)],
+    points: &[(u8, u8, u16, Vec<(SystemTime, f64)>)],
 ) -> Result<std::path::PathBuf> {
     let series = dashboard
         .graphs
@@ -64,13 +66,19 @@ pub fn write_snapshot(
                     .flatten()
             });
             SeriesSnap {
+                backend_id: graph.backend_id,
+                capability_id: graph.capability_id,
                 metric_id: graph.metric_id,
                 metric_name: metric.map(|m| m.name.clone()).unwrap_or_default(),
                 unit: metric.map(|m| m.unit.clone()).unwrap_or_default(),
                 points: points
                     .iter()
-                    .find(|(metric_id, _)| *metric_id == graph.metric_id)
-                    .map(|(_, samples)| {
+                    .find(|(backend_id, capability_id, metric_id, _)| {
+                        *backend_id == graph.backend_id
+                            && *capability_id == graph.capability_id
+                            && *metric_id == graph.metric_id
+                    })
+                    .map(|(_, _, _, samples)| {
                         samples
                             .iter()
                             .map(|(at, value)| PointSnap {

@@ -41,6 +41,20 @@ impl Paths {
         self.root.join("snapshots")
     }
 
+    pub fn log_file(&self) -> PathBuf {
+        if let Some(path) = std::env::var_os("QCPERF_TUI_LOG") {
+            return PathBuf::from(path);
+        }
+        #[cfg(windows)]
+        if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+            return PathBuf::from(local_app_data)
+                .join("qcperf-tui")
+                .join("logs")
+                .join("qcperf-tui.log");
+        }
+        self.root.join("logs").join("qcperf-tui.log")
+    }
+
     pub fn ensure(&self) -> Result<()> {
         fs::create_dir_all(self.dashboards_dir())?;
         fs::create_dir_all(self.exports_dir())?;

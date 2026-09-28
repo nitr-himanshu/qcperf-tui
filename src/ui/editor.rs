@@ -15,6 +15,7 @@ pub struct Editor {
     pub dashboard: Dashboard,
     pub cursor: usize,
     pub active: bool,
+    pub is_new: bool,
 }
 
 impl Editor {
@@ -23,6 +24,16 @@ impl Editor {
             dashboard,
             cursor: 0,
             active: true,
+            is_new: false,
+        }
+    }
+
+    pub fn new(dashboard: Dashboard) -> Self {
+        Self {
+            dashboard,
+            cursor: 0,
+            active: true,
+            is_new: true,
         }
     }
 
@@ -102,24 +113,26 @@ impl Editor {
                 graph.backend_id == row.backend_id && graph.capability_id == row.capability_id
             });
             if !still {
-                self.dashboard
-                    .rates
-                    .retain(|rate| {
-                        !(rate.backend_id == row.backend_id
-                            && rate.capability_id == row.capability_id)
-                    });
+                self.dashboard.rates.retain(|rate| {
+                    !(rate.backend_id == row.backend_id && rate.capability_id == row.capability_id)
+                });
             }
             return;
         }
-        let Some(capability) = capabilities.iter().find(|cap| {
-            cap.backend_id == row.backend_id && cap.capability_id == row.capability_id
-        }) else {
+        let Some(capability) = capabilities
+            .iter()
+            .find(|cap| cap.backend_id == row.backend_id && cap.capability_id == row.capability_id)
+        else {
             return;
         };
         let Some(metric) = capability.metric(row.metric_id) else {
             return;
         };
-        if self.dashboard.rate(row.backend_id, row.capability_id).is_none() {
+        if self
+            .dashboard
+            .rate(row.backend_id, row.capability_id)
+            .is_none()
+        {
             if let Some(rate) = default_rate(capability) {
                 self.dashboard.rates.push(rate);
             }
@@ -153,23 +166,35 @@ impl Editor {
         }
     }
 
-    fn step_rate(&mut self, row: &MetricRow, capabilities: &[Capability], field: RateField, dir: i32) {
-        let Some(capability) = capabilities.iter().find(|cap| {
-            cap.backend_id == row.backend_id && cap.capability_id == row.capability_id
-        }) else {
-            return;
-        };
-        let Some(rate) = self
-            .dashboard
-            .rates
-            .iter_mut()
-            .find(|rate| rate.backend_id == row.backend_id && rate.capability_id == row.capability_id)
+    fn step_rate(
+        &mut self,
+        row: &MetricRow,
+        capabilities: &[Capability],
+        field: RateField,
+        dir: i32,
+    ) {
+        let Some(capability) = capabilities
+            .iter()
+            .find(|cap| cap.backend_id == row.backend_id && cap.capability_id == row.capability_id)
         else {
             return;
         };
+        let Some(rate) = self.dashboard.rates.iter_mut().find(|rate| {
+            rate.backend_id == row.backend_id && rate.capability_id == row.capability_id
+        }) else {
+            return;
+        };
         match field {
-            RateField::Sample => step_list(&capability.sampling_rates_ms, &mut rate.sampling_rate_ms, dir),
-            RateField::Stream => step_list(&capability.streaming_rates_ms, &mut rate.streaming_rate_ms, dir),
+            RateField::Sample => step_list(
+                &capability.sampling_rates_ms,
+                &mut rate.sampling_rate_ms,
+                dir,
+            ),
+            RateField::Stream => step_list(
+                &capability.streaming_rates_ms,
+                &mut rate.streaming_rate_ms,
+                dir,
+            ),
         }
         if rate.streaming_rate_ms < rate.sampling_rate_ms {
             if let Some(stream) = capability
@@ -240,7 +265,10 @@ fn step_list(values: &[u16], current: &mut u16, dir: i32) {
     if values.is_empty() {
         return;
     }
-    let index = values.iter().position(|value| *value == *current).unwrap_or(0) as i32;
+    let index = values
+        .iter()
+        .position(|value| *value == *current)
+        .unwrap_or(0) as i32;
     let next = index + dir;
     if next >= 0 && (next as usize) < values.len() {
         *current = values[next as usize];
@@ -252,7 +280,10 @@ pub fn render(frame: &mut Frame, area: Rect, editor: &Editor, capabilities: &[Ca
     let items: Vec<ListItem> = rows
         .iter()
         .map(|row| {
-            let selected = editor.dashboard.contains_metric(row.backend_id, row.capability_id, row.metric_id);
+            let selected =
+                editor
+                    .dashboard
+                    .contains_metric(row.backend_id, row.capability_id, row.metric_id);
             let mark = if selected { "[x]" } else { "[ ]" };
             let detail = editor
                 .dashboard
@@ -275,7 +306,12 @@ pub fn render(frame: &mut Frame, area: Rect, editor: &Editor, capabilities: &[Ca
             let rate = editor
                 .dashboard
                 .rate(row.backend_id, row.capability_id)
-                .map(|rate| format!("  sample {} ms  stream {} ms", rate.sampling_rate_ms, rate.streaming_rate_ms))
+                .map(|rate| {
+                    format!(
+                        "  sample {} ms  stream {} ms",
+                        rate.sampling_rate_ms, rate.streaming_rate_ms
+                    )
+                })
                 .unwrap_or_default();
             ListItem::new(Line::from(Span::raw(format!(
                 "{mark} {} ({}){detail}{rate}",

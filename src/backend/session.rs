@@ -3,9 +3,7 @@ use std::time::{Duration, SystemTime};
 
 use crate::backend::QcPerf;
 use crate::error::{Error, Result};
-use crate::model::{
-    CapabilityRate, Dashboard, DashboardId, Sample, SampleRing,
-};
+use crate::model::{CapabilityRate, Dashboard, DashboardId, Sample, SampleRing};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct SessionKey {
@@ -91,9 +89,9 @@ impl SessionTable {
             for graph in dashboard.graphs.iter().filter(|graph| {
                 graph.backend_id == rate.backend_id && graph.capability_id == rate.capability_id
             }) {
-                slot.rings.entry((dashboard.id, graph.metric_id)).or_insert_with(|| {
-                    SampleRing::new(graph.window, key.period())
-                });
+                slot.rings
+                    .entry((dashboard.id, graph.metric_id))
+                    .or_insert_with(|| SampleRing::new(graph.window, key.period()));
             }
         }
         Ok(())
@@ -172,7 +170,10 @@ impl SessionTable {
         }
 
         for rate in &dashboard.rates {
-            if self.subscription_key(dashboard.id, rate.backend_id, rate.capability_id).is_some() {
+            if self
+                .subscription_key(dashboard.id, rate.backend_id, rate.capability_id)
+                .is_some()
+            {
                 continue;
             }
             if let Some(live) = self.live_rate(rate.backend_id, rate.capability_id) {
@@ -208,14 +209,9 @@ impl SessionTable {
 
     pub fn ingest(&mut self, samples: &[Sample]) {
         for sample in samples {
-            let Some(key) = self
-                .active
-                .keys()
-                .copied()
-                .find(|key| {
-                    key.backend_id == sample.backend_id && key.capability_id == sample.capability_id
-                })
-            else {
+            let Some(key) = self.active.keys().copied().find(|key| {
+                key.backend_id == sample.backend_id && key.capability_id == sample.capability_id
+            }) else {
                 continue;
             };
             let Some(slot) = self.active.get_mut(&key) else {
@@ -230,12 +226,27 @@ impl SessionTable {
         }
     }
 
-    pub fn ring(&self, dashboard_id: DashboardId, metric_id: u16) -> Option<&SampleRing> {
-        self.active.values().find_map(|slot| slot.rings.get(&(dashboard_id, metric_id)))
+    pub fn ring(
+        &self,
+        dashboard_id: DashboardId,
+        backend_id: u8,
+        capability_id: u8,
+        metric_id: u16,
+    ) -> Option<&SampleRing> {
+        self.active
+            .iter()
+            .find(|(key, _)| key.backend_id == backend_id && key.capability_id == capability_id)
+            .and_then(|(_, slot)| slot.rings.get(&(dashboard_id, metric_id)))
     }
 
-    pub fn points(&self, dashboard_id: DashboardId, metric_id: u16) -> Vec<(SystemTime, f64)> {
-        self.ring(dashboard_id, metric_id)
+    pub fn points(
+        &self,
+        dashboard_id: DashboardId,
+        backend_id: u8,
+        capability_id: u8,
+        metric_id: u16,
+    ) -> Vec<(SystemTime, f64)> {
+        self.ring(dashboard_id, backend_id, capability_id, metric_id)
             .map(|ring| ring.points().iter().copied().collect())
             .unwrap_or_default()
     }
@@ -286,8 +297,9 @@ impl SessionTable {
             })
             .map(|graph| (graph.metric_id, graph.window))
             .collect();
-        slot.rings
-            .retain(|(id, metric), _| *id != dashboard.id || wanted.iter().any(|(m, _)| m == metric));
+        slot.rings.retain(|(id, metric), _| {
+            *id != dashboard.id || wanted.iter().any(|(m, _)| m == metric)
+        });
         for (metric_id, window) in wanted {
             match slot.rings.get_mut(&(dashboard.id, metric_id)) {
                 Some(ring) => ring.set_window(window),
@@ -301,7 +313,12 @@ impl SessionTable {
         }
     }
 
-    fn detach(&mut self, qc: &mut QcPerf, key: SessionKey, dashboard_id: DashboardId) -> Result<()> {
+    fn detach(
+        &mut self,
+        qc: &mut QcPerf,
+        key: SessionKey,
+        dashboard_id: DashboardId,
+    ) -> Result<()> {
         let Some(slot) = self.active.get_mut(&key) else {
             return Ok(());
         };

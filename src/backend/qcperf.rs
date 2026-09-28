@@ -5,6 +5,7 @@ use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::error::{Error, Result};
+use crate::logging::{Level, VerboseLog};
 use crate::model::{Capability, CapabilityRate, MetricInfo, Sample};
 
 #[allow(
@@ -69,15 +70,22 @@ pub struct QcPerf {
 
 impl QcPerf {
     pub fn init() -> Result<(Self, Receiver<BridgeEvent>)> {
+        Self::init_with_log(&mut VerboseLog::disabled())
+    }
+
+    pub fn init_with_log(log: &mut VerboseLog) -> Result<(Self, Receiver<BridgeEvent>)> {
         let (tx, rx) = sync_channel(256);
         *EVENTS.lock().expect("event bridge") = Some(tx);
 
+        log.record(Level::Debug, "calling qcperf_init");
         let init_rc = unsafe { bindings::qcperf_init() };
         if init_rc != bindings::QcPerfReturnCode::QC_PERF_RETURN_CODE_SUCCESS
             && init_rc != bindings::QcPerfReturnCode::QC_PERF_RETURN_CODE_ALREADY_INITIALIZED
         {
             *EVENTS.lock().expect("event bridge") = None;
-            return Err(error_from(init_rc));
+            let err = error_from(init_rc);
+            log.record(Level::Fatal, &format!("qcperf_init failed: {err}"));
+            return Err(err);
         }
 
         let mut qc = Self {
@@ -92,32 +100,40 @@ impl QcPerf {
                 break;
             }
             let backend = bindings::QcPerfBackendId(raw);
+            log.record(Level::Debug, &format!("connecting backend {raw}"));
             let rc = unsafe { bindings::qcperf_connect_backend(backend, Some(on_message)) };
             if rc == bindings::QcPerfReturnCode::QC_PERF_RETURN_CODE_INVALID_BACKEND_ID
                 || rc == bindings::QcPerfReturnCode::QC_PERF_RETURN_CODE_NOT_SUPPORTED
             {
+                log.record(Level::Debug, &format!("backend {raw} is not supported"));
                 continue;
             }
             if rc != bindings::QcPerfReturnCode::QC_PERF_RETURN_CODE_SUCCESS
                 && rc != bindings::QcPerfReturnCode::QC_PERF_RETURN_CODE_BACKEND_ALREADY_CONNECTED
             {
-                qc.warnings
-                    .push(format!("backend {raw}: {}", error_from(rc)));
+                let warning = format!("backend {raw}: {}", error_from(rc));
+                log.record(Level::Error, &warning);
+                qc.warnings.push(warning);
                 continue;
             }
+            log.record(Level::Info, &format!("connected backend {raw}"));
 
             let id = raw as u8;
             match unsafe { read_capabilities(backend, id) } {
                 Ok(caps) => qc.capabilities.extend(caps),
-                Err(err) => qc.warnings.push(err.to_string()),
+                Err(err) => {
+                    log.record(Level::Warning, &err.to_string());
+                    qc.warnings.push(err.to_string());
+                }
             }
 
             let data_rc = unsafe { bindings::qcperf_set_data_callback(backend, Some(on_data)) };
             if data_rc != bindings::QcPerfReturnCode::QC_PERF_RETURN_CODE_SUCCESS
                 && data_rc != bindings::QcPerfReturnCode::QC_PERF_RETURN_CODE_CALLBACK_ALREADY_SET
             {
-                qc.warnings
-                    .push(format!("backend {raw} data callback: {}", error_from(data_rc)));
+                let warning = format!("backend {raw} data callback: {}", error_from(data_rc));
+                log.record(Level::Error, &warning);
+                qc.warnings.push(warning);
             }
             qc.connected.push(id);
         }
@@ -359,7 +375,7 @@ unsafe extern "C" fn on_message(
             #[cfg(not(windows))]
             bindings::QcPerfMessageLevel::QC_PERF_MESSAGE_LEVEL_DEBUG => "debug",
         };
-        if level == "debug" || level == "info" || message.message.is_null() {
+        if message.message.is_null() {
             return;
         }
         let len = message.message_length;

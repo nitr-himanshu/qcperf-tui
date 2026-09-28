@@ -36,7 +36,8 @@ Press `?` in the list or the live view for the same map.
 
 | Context | Key | Action |
 |---|---|---|
-| List | Up / Down | Select a dashboard |
+| List | Up / Down, Left / Right | Select a dashboard |
+| List | Tab | Select the next dashboard |
 | List | Enter | Open it |
 | List | `n` | New dashboard |
 | List | `d` | Delete a dashboard that is not running |
@@ -44,10 +45,12 @@ Press `?` in the list or the live view for the same map.
 | Live view | `s` / `x` | Start / stop this dashboard |
 | Live view | `e` | Edit metrics, chart, color, window, and rates |
 | Live view | Tab, Left, Right | Switch dashboard; profiling continues |
+| Live view | Page Up / Page Down | Browse chart pages when all charts do not fit |
 | Live view | `c` | Write current samples to CSV |
 | Live view | `v` | Toggle appending CSV while this dashboard runs |
 | Live view | `p` | Write a JSON snapshot |
 | Live view | Esc | Back to the list |
+| Editor | Up / Down | Move focus through metrics |
 | Editor | Space | Toggle the focused metric |
 | Editor | `t` | Cycle pie, line, bar |
 | Editor | `c` | Next color |
@@ -68,6 +71,30 @@ Config lives next to the executable, in a `config` directory. Override that loca
 | `config/dashboards/<id>.toml` | Saved dashboards |
 | `config/exports/<name>-<date>.csv` | CSV export |
 | `config/snapshots/<name>-<time>.json` | Snapshots |
+
+### Verbose logs
+
+Pass repeated `-v` flags to increase the log detail. Messages at the selected
+level and more severe levels are appended to a log file, keeping the terminal
+UI readable:
+
+| Option | Messages logged |
+|---|---|
+| `-v` | FATAL |
+| `-vv` | FATAL, ERROR |
+| `-vvv` | FATAL, ERROR, WARNING |
+| `-vvvv` | FATAL, ERROR, WARNING, INFO |
+| `-vvvvv` | FATAL, ERROR, WARNING, INFO, DEBUG |
+
+On Windows, the log is `%LOCALAPPDATA%\qcperf-tui\logs\qcperf-tui.log`. Set
+`QCPERF_TUI_LOG` to use a different path. `--help` shows the command-line
+options. Verbose logging starts after Windows loads the executable; it cannot
+record a missing-DLL or other loader failure that happens before `main`.
+
+```powershell
+.\qcperf-tui.exe -vvvvv
+Get-Content "$env:LOCALAPPDATA\qcperf-tui\logs\qcperf-tui.log" -Tail 100
+```
 
 ## Prerequisites
 

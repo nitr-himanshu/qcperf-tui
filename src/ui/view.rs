@@ -4,8 +4,8 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Color;
 use ratatui::Frame;
 
-use crate::model::{Capability, ChartKind, Dashboard, GraphSpec};
 use crate::model::unit::is_percent;
+use crate::model::{Capability, ChartKind, Dashboard, GraphSpec};
 use crate::theme::Theme;
 use crate::ui::widgets::{BarSeries, LineSeries, PieChart, PieSlice};
 
@@ -42,22 +42,32 @@ pub fn render(
     theme: &Theme,
     dashboard: &Dashboard,
     series: &[Vec<(SystemTime, f64)>],
+    page: usize,
 ) {
     let cells = build_cells(capabilities, theme, dashboard, series);
     if cells.is_empty() {
+        frame.render_widget(
+            ratatui::widgets::Paragraph::new(
+                "No metrics selected. Press e to choose metrics for this dashboard.",
+            )
+            .block(
+                ratatui::widgets::Block::default()
+                    .borders(ratatui::widgets::Borders::ALL)
+                    .title("Dashboard"),
+            )
+            .wrap(ratatui::widgets::Wrap { trim: true }),
+            area,
+        );
         return;
     }
-    let rects = grid_rects(area, cells.len());
-    for (cell, rect) in cells.iter().zip(rects) {
+    let per_page = page_capacity(area.width, area.height);
+    let first = page.min(cells.len().div_ceil(per_page).saturating_sub(1)) * per_page;
+    let visible = &cells[first..(first + per_page).min(cells.len())];
+    let rects = grid_rects(area, visible.len());
+    for (cell, rect) in visible.iter().zip(rects) {
         match &cell.kind {
             CellKind::Pie { title, slices } => {
-                frame.render_widget(
-                    PieChart {
-                        title,
-                        slices,
-                    },
-                    rect,
-                );
+                frame.render_widget(PieChart { title, slices }, rect);
             }
             CellKind::Line {
                 title,
@@ -99,6 +109,34 @@ pub fn render(
             }
         }
     }
+}
+
+/// Keep each chart tall enough to show its title, axes, and useful plot area.
+pub fn page_capacity(width: u16, height: u16) -> usize {
+    columns(width) * (height as usize / 8).max(1)
+}
+
+pub fn chart_count(dashboard: &Dashboard) -> usize {
+    let mut count = 0;
+    let mut index = 0;
+    while index < dashboard.graphs.len() {
+        let graph = &dashboard.graphs[index];
+        count += 1;
+        index += 1;
+        if graph.chart == ChartKind::Pie {
+            while index < dashboard.graphs.len() {
+                let next = &dashboard.graphs[index];
+                if next.chart != ChartKind::Pie
+                    || next.backend_id != graph.backend_id
+                    || next.capability_id != graph.capability_id
+                {
+                    break;
+                }
+                index += 1;
+            }
+        }
+    }
+    count
 }
 
 fn build_cells(
@@ -169,7 +207,12 @@ fn capability_label(capabilities: &[Capability], graph: &GraphSpec) -> String {
         .iter()
         .find(|cap| cap.backend_id == graph.backend_id && cap.capability_id == graph.capability_id)
         .map(|cap| cap.label())
-        .unwrap_or_else(|| format!("backend {} capability {}", graph.backend_id, graph.capability_id))
+        .unwrap_or_else(|| {
+            format!(
+                "backend {} capability {}",
+                graph.backend_id, graph.capability_id
+            )
+        })
 }
 
 fn metric_text(capabilities: &[Capability], graph: &GraphSpec) -> (String, String) {

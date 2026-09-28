@@ -16,6 +16,7 @@ use crate::backend::{try_recv, BridgeEvent, QcPerf, SessionTable};
 use crate::error::Result;
 use crate::export::csv::{self, safe_name};
 use crate::export::snapshot;
+use crate::logging::{Level, VerboseLog};
 use crate::model::{lookup_metric, Dashboard, DashboardId, RunState, Sample};
 use crate::persist::Paths;
 use crate::theme::Theme;
@@ -36,16 +37,26 @@ pub struct App {
     sessions: SessionTable,
     dashboards: Vec<Dashboard>,
     selected: usize,
+    view_page: usize,
     screen: Screen,
     editor: Option<Editor>,
     help_return: Screen,
     theme: Theme,
     status: String,
     init_error: Option<String>,
+    log: VerboseLog,
 }
 
 impl App {
     pub fn new(qc: Result<(QcPerf, Receiver<BridgeEvent>)>, paths: Paths) -> Self {
+        Self::with_log(qc, paths, VerboseLog::disabled())
+    }
+
+    pub fn with_log(
+        qc: Result<(QcPerf, Receiver<BridgeEvent>)>,
+        paths: Paths,
+        log: VerboseLog,
+    ) -> Self {
         let _ = paths.ensure();
         let theme = Theme::load(&paths.colors());
         let (qc, events, init_error) = match qc {
@@ -78,19 +89,30 @@ impl App {
             sessions: SessionTable::new(),
             dashboards,
             selected: 0,
+            view_page: 0,
             screen: Screen::List,
             editor: None,
             help_return: Screen::List,
             theme,
             status,
             init_error,
+            log,
         }
     }
 
     pub fn run(mut self) -> Result<()> {
-        let mut restore = TerminalRestore::arm()?;
-        let result = self.drive(&mut restore);
-        restore.restore_if_armed();
+        let result = match TerminalRestore::arm() {
+            Ok(mut restore) => {
+                let result = self.drive(&mut restore);
+                restore.restore_if_armed();
+                result
+            }
+            Err(err) => Err(err),
+        };
+        if let Err(err) = &result {
+            self.log
+                .record(Level::Fatal, &format!("application stopped: {err}"));
+        }
         self.shutdown();
         result
     }
@@ -122,12 +144,13 @@ impl App {
             if event::poll(Duration::from_millis(50))? {
                 match event::read()? {
                     Event::Key(key) => {
-                        if key.kind == KeyEventKind::Press && self.handle_key(key) {
+                        if key.kind == KeyEventKind::Press && self.handle_key(key, area) {
                             return Ok(());
                         }
                     }
                     Event::Resize(width, height) => {
                         area = sync_viewport(terminal, area, Some((width, height)))?;
+                        self.view_page = 0;
                     }
                     _ => {}
                 }
@@ -136,7 +159,7 @@ impl App {
         }
     }
 
-    fn handle_key(&mut self, key: KeyEvent) -> bool {
+    fn handle_key(&mut self, key: KeyEvent, area: Rect) -> bool {
         if key.code == KeyCode::Char('q') && self.screen != Screen::Edit {
             return true;
         }
@@ -147,7 +170,7 @@ impl App {
         }
         match self.screen {
             Screen::List => self.key_list(key),
-            Screen::View => self.key_view(key),
+            Screen::View => self.key_view(key, area),
             Screen::Edit => self.key_edit(key),
             Screen::Help => {
                 if key.code == KeyCode::Esc {
@@ -161,31 +184,37 @@ impl App {
     fn key_list(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Up => self.selected = self.selected.saturating_sub(1),
-            KeyCode::Down => {
+            KeyCode::Down | KeyCode::Right | KeyCode::Tab => {
                 if self.selected + 1 < self.dashboards.len() {
                     self.selected += 1;
                 }
             }
+            KeyCode::Left => self.selected = self.selected.saturating_sub(1),
             KeyCode::Enter => {
                 if !self.dashboards.is_empty() {
                     self.screen = Screen::View;
                 }
             }
             KeyCode::Char('n') => {
-                let dashboard = Dashboard::new(format!("Dashboard {}", self.dashboards.len() + 1));
-                let _ = self.paths.save_dashboard(&dashboard);
+                let dashboard =
+                    Dashboard::new(format!("Dashboard {}", self.next_dashboard_number()));
                 self.dashboards.push(dashboard);
                 self.selected = self.dashboards.len() - 1;
-                self.open_editor();
+                self.view_page = 0;
+                self.editor = Some(Editor::new(self.dashboards[self.selected].clone()));
+                self.screen = Screen::Edit;
             }
             KeyCode::Char('d') => self.delete_selected(),
             _ => {}
         }
     }
 
-    fn key_view(&mut self, key: KeyEvent) {
+    fn key_view(&mut self, key: KeyEvent, area: Rect) {
         match key.code {
-            KeyCode::Esc => self.screen = Screen::List,
+            KeyCode::Esc => {
+                self.screen = Screen::List;
+                self.view_page = 0;
+            }
             KeyCode::Char('e') => self.open_editor(),
             KeyCode::Char('s') => self.start_selected(),
             KeyCode::Char('x') => self.stop_selected(),
@@ -194,7 +223,22 @@ impl App {
             KeyCode::Char('p') => self.snapshot_selected(),
             KeyCode::Tab | KeyCode::Right => self.cycle(1),
             KeyCode::Left => self.cycle(-1),
+            KeyCode::PageDown => self.step_view_page(1, area),
+            KeyCode::PageUp => self.step_view_page(-1, area),
             _ => {}
+        }
+    }
+
+    fn step_view_page(&mut self, direction: i32, area: Rect) {
+        let Some(dashboard) = self.selected_dashboard() else {
+            return;
+        };
+        let capacity = ui::view_page_capacity(area.width, area.height.saturating_sub(3));
+        let pages = ui::view_chart_count(dashboard).div_ceil(capacity).max(1);
+        let next = (self.view_page as i32 + direction).clamp(0, pages as i32 - 1) as usize;
+        if next != self.view_page {
+            self.view_page = next;
+            self.status = format!("chart page {} of {pages}", next + 1);
         }
     }
 
@@ -232,12 +276,24 @@ impl App {
         match effect {
             EditorEffect::None => {}
             EditorEffect::Cancel => {
+                let is_new = self.editor.as_ref().is_some_and(|editor| editor.is_new);
                 self.editor = None;
-                self.screen = if self.dashboards.is_empty() {
-                    Screen::List
+                if is_new {
+                    if self.selected < self.dashboards.len() {
+                        self.dashboards.remove(self.selected);
+                    }
+                    if self.selected >= self.dashboards.len() && self.selected > 0 {
+                        self.selected -= 1;
+                    }
+                    self.status = "dashboard creation cancelled".to_string();
+                    self.screen = Screen::List;
                 } else {
-                    Screen::View
-                };
+                    self.screen = if self.dashboards.is_empty() {
+                        Screen::List
+                    } else {
+                        Screen::View
+                    };
+                }
             }
             EditorEffect::Saved => self.save_editor(),
             EditorEffect::Status(text) => self.status = text,
@@ -249,6 +305,7 @@ impl App {
             return;
         };
         self.editor = Some(Editor::open(dashboard));
+        self.view_page = 0;
         self.screen = Screen::Edit;
     }
 
@@ -269,7 +326,7 @@ impl App {
                 match self.sessions.reconcile(qc, &dashboard) {
                     Ok(Some(note)) => self.status = note,
                     Ok(None) => self.status = format!("saved {}", dashboard.name),
-                    Err(err) => self.status = err.to_string(),
+                    Err(err) => self.set_error(err),
                 }
             }
         } else {
@@ -282,7 +339,9 @@ impl App {
         {
             *slot = dashboard.clone();
         }
-        let _ = self.paths.save_dashboard(&dashboard);
+        if let Err(err) = self.paths.save_dashboard(&dashboard) {
+            self.set_error(format!("could not save dashboard: {err}"));
+        }
         self.screen = Screen::View;
     }
 
@@ -299,7 +358,8 @@ impl App {
         }
         let dashboard = self.dashboards[index].clone();
         if dashboard.rates.is_empty() {
-            self.status = "edit the dashboard and choose at least one metric before starting".to_string();
+            self.status =
+                "edit the dashboard and choose at least one metric before starting".to_string();
             return;
         }
         let Some(qc) = self.qc.as_mut() else {
@@ -310,7 +370,7 @@ impl App {
                 self.dashboards[index].run = RunState::Running;
                 self.status = format!("started {}", dashboard.name);
             }
-            Err(err) => self.status = err.to_string(),
+            Err(err) => self.set_error(err),
         }
     }
 
@@ -327,7 +387,7 @@ impl App {
                 self.dashboards[index].run = RunState::Stopped;
                 self.status = format!("stopped {}", self.dashboards[index].name);
             }
-            Err(err) => self.status = err.to_string(),
+            Err(err) => self.set_error(err),
         }
     }
 
@@ -338,6 +398,7 @@ impl App {
         let len = self.dashboards.len() as i32;
         let next = (self.selected as i32 + dir).rem_euclid(len) as usize;
         self.selected = next;
+        self.view_page = 0;
         self.status = format!("showing {}", self.dashboards[self.selected].name);
     }
 
@@ -351,11 +412,14 @@ impl App {
         }
         let id = self.dashboards[index].id;
         let name = self.dashboards[index].name.clone();
+        if let Err(err) = self.paths.delete_dashboard(id) {
+            self.set_error(format!("could not delete {name}: {err}"));
+            return;
+        }
         self.dashboards.remove(index);
         if self.selected >= self.dashboards.len() && self.selected > 0 {
             self.selected -= 1;
         }
-        let _ = self.paths.delete_dashboard(id);
         self.status = format!("deleted {name}");
     }
 
@@ -365,7 +429,7 @@ impl App {
         };
         match self.write_csv(&dashboard, None) {
             Ok(path) => self.status = format!("csv {}", path.display()),
-            Err(err) => self.status = err.to_string(),
+            Err(err) => self.set_error(err),
         }
     }
 
@@ -392,12 +456,24 @@ impl App {
         let points: Vec<_> = dashboard
             .graphs
             .iter()
-            .map(|graph| (graph.metric_id, self.sessions.points(id, graph.metric_id)))
+            .map(|graph| {
+                (
+                    graph.backend_id,
+                    graph.capability_id,
+                    graph.metric_id,
+                    self.sessions.points(
+                        id,
+                        graph.backend_id,
+                        graph.capability_id,
+                        graph.metric_id,
+                    ),
+                )
+            })
             .collect();
         let capabilities = self.capabilities().to_vec();
         match snapshot::write_snapshot(&self.paths, &capabilities, &dashboard, &points) {
             Ok(path) => self.status = format!("snapshot {}", path.display()),
-            Err(err) => self.status = err.to_string(),
+            Err(err) => self.set_error(err),
         }
     }
 
@@ -407,16 +483,28 @@ impl App {
             match event {
                 BridgeEvent::Samples(samples) => batches.push(samples),
                 BridgeEvent::Message { level, text } => {
-                    self.status = format!("{level}: {text}");
+                    let severity = Level::parse(&level);
+                    self.log.record(severity, &text);
+                    if matches!(severity, Level::Error | Level::Warning)
+                        || self.log.enabled(severity)
+                    {
+                        self.status = format!("{level}: {text}");
+                    }
                 }
             }
         }
         for batch in &batches {
             self.sessions.ingest(batch);
             if let Err(err) = self.append_followed(batch) {
-                self.status = err.to_string();
+                self.set_error(err);
             }
         }
+    }
+
+    fn set_error(&mut self, error: impl std::fmt::Display) {
+        let message = error.to_string();
+        self.log.record(Level::Error, &message);
+        self.status = message;
     }
 
     fn append_followed(&self, batch: &[Sample]) -> Result<()> {
@@ -465,7 +553,12 @@ impl App {
                 .iter()
                 .flat_map(|graph| {
                     self.sessions
-                        .points(dashboard.id, graph.metric_id)
+                        .points(
+                            dashboard.id,
+                            graph.backend_id,
+                            graph.capability_id,
+                            graph.metric_id,
+                        )
                         .into_iter()
                         .map(|point| {
                             let sample = Sample {
@@ -512,10 +605,16 @@ impl App {
 
     fn shutdown(&mut self) {
         if let Some(qc) = self.qc.as_mut() {
-            let _ = self.sessions.stop_all(qc);
+            if let Err(err) = self.sessions.stop_all(qc) {
+                self.log
+                    .record(Level::Error, &format!("could not stop sessions: {err}"));
+            }
         }
         if let Some(qc) = self.qc.take() {
-            let _ = qc.shutdown();
+            if let Err(err) = qc.shutdown() {
+                self.log
+                    .record(Level::Error, &format!("libqcperf shutdown failed: {err}"));
+            }
         }
     }
 
@@ -531,8 +630,28 @@ impl App {
         self.selected
     }
 
+    pub fn view_page(&self) -> usize {
+        self.view_page
+    }
+
+    fn next_dashboard_number(&self) -> usize {
+        let mut number = 1;
+        loop {
+            let candidate = format!("Dashboard {number}");
+            if !self
+                .dashboards
+                .iter()
+                .any(|dashboard| dashboard.name == candidate)
+            {
+                return number;
+            }
+            number += 1;
+        }
+    }
+
     pub fn selected_dashboard(&self) -> Option<&Dashboard> {
-        self.dashboards.get(self.selected.min(self.dashboards.len().saturating_sub(1)))
+        self.dashboards
+            .get(self.selected.min(self.dashboards.len().saturating_sub(1)))
             .filter(|_| !self.dashboards.is_empty())
     }
 
@@ -556,8 +675,15 @@ impl App {
         self.editor.as_ref()
     }
 
-    pub fn points(&self, id: DashboardId, metric_id: u16) -> Vec<(SystemTime, f64)> {
-        self.sessions.points(id, metric_id)
+    pub fn points(
+        &self,
+        id: DashboardId,
+        backend_id: u8,
+        capability_id: u8,
+        metric_id: u16,
+    ) -> Vec<(SystemTime, f64)> {
+        self.sessions
+            .points(id, backend_id, capability_id, metric_id)
     }
 }
 

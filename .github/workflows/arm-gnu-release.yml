@@ -234,13 +234,18 @@ jobs:
             echo "No release archives were downloaded" >&2
             exit 1
           fi
-          notes=$(cat <<EOF
-          qcperf-tui ${RELEASE_TAG}
-
-          - \`qcperf-tui-${RELEASE_TAG}-linux-aarch64.tar.gz\` — Linux ARM64 build with libqcperf and fastrpc.
-          - \`qcperf-tui-${RELEASE_TAG}-windows-arm64.zip\` — Windows ARM64 build with MSVC.
-          EOF
-          )
+          notes_file=".github/release-notes/${RELEASE_TAG}.md"
+          if [[ -f "${notes_file}" ]]; then
+            notes=$(cat "${notes_file}")
+          else
+            notes="qcperf-tui ${RELEASE_TAG}"
+          fi
+          notes+=$'\n\nDownloads:\n'
+          download_notes=$(printf -- \
+            '- `%s-linux-aarch64.tar.gz` — Linux ARM64 build with libqcperf and fastrpc.\n- `%s-windows-arm64.zip` — Windows ARM64 build with MSVC.' \
+            "qcperf-tui-${RELEASE_TAG}" \
+            "qcperf-tui-${RELEASE_TAG}")
+          notes+="${download_notes}"
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
             gh release upload "${RELEASE_TAG}" "${archives[@]}" --clobber
           else
