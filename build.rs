@@ -230,13 +230,13 @@ fn collect_static_libs(dir: &Path, out: &mut Vec<PathBuf>) {
 
 /// libclang parses these headers on the host. The ARM GNU `gcc` earlier on
 /// `PATH` makes it miss the host multiarch directory that provides
-/// `bits/libc-header-start.h`. Keep the Windows ARM64 target selected by
-/// `generate_bindings`; passing the x64 Windows host target makes Clang parse
-/// the Windows SDK with the wrong target and breaks MSVC headers.
+/// `bits/libc-header-start.h`. Bindgen parses these API headers using the host
+/// target; the public Windows structs use the same 64-bit layout on x64 and
+/// ARM64.
 fn host_clang_args() -> Vec<String> {
     let host = env::var("HOST").unwrap_or_default();
     let mut args = Vec::new();
-    if !host.is_empty() && !host.contains("windows") {
+    if !host.is_empty() {
         args.push(format!("--target={host}"));
     }
     let multiarch = if host.starts_with("x86_64") {
@@ -252,8 +252,9 @@ fn host_clang_args() -> Vec<String> {
             args.push(format!("-I{}", include.display()));
         }
     }
-    // Keep Clang's MSVC extensions for the Windows SDK headers, but disable
-    // compatibility mode so bindgen emits the complete libqcperf structs.
+    // Keep Clang's MSVC extensions for the Windows SDK headers. Compatibility
+    // mode combined with the ARM64 target makes bindgen treat public structs
+    // as opaque; the host target above still has the same 64-bit C layouts.
     if host.contains("windows") {
         args.push("-fno-ms-compatibility".to_string());
     }
