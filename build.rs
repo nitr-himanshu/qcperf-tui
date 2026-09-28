@@ -159,7 +159,28 @@ fn link_static_libs(target: &str, build_dir: &Path) {
             build_dir.display()
         );
     }
-    libs.sort();
+    if target == "aarch64-pc-windows-msvc" {
+        // The core archive references backend factories, and backend archives
+        // reference helper archives. Keep that dependency order for MSVC's
+        // one-pass static archive resolution.
+        libs.sort_by_key(|lib| {
+            let name = lib
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or_default();
+            let lower = name.to_ascii_lowercase();
+            let priority = if lower == "qcperfcore" {
+                0
+            } else if lower.contains("backend") {
+                1
+            } else {
+                2
+            };
+            (priority, lower)
+        });
+    } else {
+        libs.sort();
+    }
     let mut search = Vec::new();
     for lib in &libs {
         if let Some(dir) = lib.parent() {
