@@ -177,7 +177,13 @@ fn link_static_libs(target: &str, build_dir: &Path) {
             .and_then(|s| s.to_str())
             .expect("static library name");
         let name = name.strip_prefix("lib").unwrap_or(name);
-        println!("cargo:rustc-link-lib=static:+whole-archive={name}");
+        if target == "aarch64-pc-windows-msvc" {
+            // Several Windows archives embed the same utility source files.
+            // Link only referenced archive members to avoid duplicate symbols.
+            println!("cargo:rustc-link-lib=static={name}");
+        } else {
+            println!("cargo:rustc-link-lib=static:+whole-archive={name}");
+        }
     }
 
     match target {
@@ -199,6 +205,7 @@ fn link_static_libs(target: &str, build_dir: &Path) {
             println!("cargo:rustc-link-lib=ole32");
             println!("cargo:rustc-link-lib=oleaut32");
             println!("cargo:rustc-link-lib=advapi32");
+            println!("cargo:rustc-link-lib=PowrProf");
         }
         _ => unreachable!(),
     }
