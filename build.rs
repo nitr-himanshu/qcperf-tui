@@ -200,8 +200,9 @@ fn link_static_libs(target: &str, build_dir: &Path) {
         let name = name.strip_prefix("lib").unwrap_or(name);
         if target == "aarch64-pc-windows-msvc" {
             // Several Windows archives embed the same utility source files.
-            // Link only referenced archive members to avoid duplicate symbols.
-            println!("cargo:rustc-link-lib=static={name}");
+            // Pass the archives directly to the binary link step so MSVC sees
+            // them in dependency order and selects only referenced members.
+            println!("cargo:rustc-link-arg-bins={}", lib.display());
         } else {
             println!("cargo:rustc-link-lib=static:+whole-archive={name}");
         }
