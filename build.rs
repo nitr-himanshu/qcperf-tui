@@ -230,11 +230,13 @@ fn collect_static_libs(dir: &Path, out: &mut Vec<PathBuf>) {
 
 /// libclang parses these headers on the host. The ARM GNU `gcc` earlier on
 /// `PATH` makes it miss the host multiarch directory that provides
-/// `bits/libc-header-start.h`.
+/// `bits/libc-header-start.h`. Keep the Windows ARM64 target selected by
+/// `generate_bindings`; passing the x64 Windows host target makes Clang parse
+/// the Windows SDK with the wrong target and breaks MSVC headers.
 fn host_clang_args() -> Vec<String> {
     let host = env::var("HOST").unwrap_or_default();
     let mut args = Vec::new();
-    if !host.is_empty() {
+    if !host.is_empty() && !host.contains("windows") {
         args.push(format!("--target={host}"));
     }
     let multiarch = if host.starts_with("x86_64") {
@@ -249,12 +251,6 @@ fn host_clang_args() -> Vec<String> {
         if include.join("bits").join("libc-header-start.h").exists() {
             args.push(format!("-I{}", include.display()));
         }
-    }
-    // A windows-msvc target enables MSVC compatibility. Clang then keeps
-    // forward-declared structs incomplete, and bindgen emits only `_address`.
-    if host.contains("windows") {
-        args.push("-fno-ms-compatibility".to_string());
-        args.push("-fno-ms-extensions".to_string());
     }
     args
 }
