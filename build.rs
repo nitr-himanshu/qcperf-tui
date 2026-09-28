@@ -100,6 +100,7 @@ fn configure_and_build(target: &str, source: &Path, build_dir: &Path) {
             configure.arg("Visual Studio 18 2026");
             configure.arg("-A");
             configure.arg("ARM64");
+            configure.arg("-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded");
         }
         _ => unreachable!(),
     }
@@ -119,6 +120,7 @@ fn configure_and_build(target: &str, source: &Path, build_dir: &Path) {
     build.arg("--build").arg(build_dir);
     if target == "aarch64-pc-windows-msvc" {
         build.arg("--config").arg("Release");
+        build.arg("--target").arg("QcPerfCore");
     }
     let status = build.status().expect("failed to spawn cmake --build");
     if !status.success() {
@@ -252,6 +254,13 @@ fn collect_static_libs(dir: &Path, out: &mut Vec<PathBuf>) {
             continue;
         };
         if ext.eq_ignore_ascii_case("a") || ext.eq_ignore_ascii_case("lib") {
+            if path
+                .file_stem()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.eq_ignore_ascii_case("QcPerfCoreTest"))
+            {
+                continue;
+            }
             out.push(path);
         }
     }

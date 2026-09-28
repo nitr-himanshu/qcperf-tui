@@ -7,3 +7,6 @@ linker = "aarch64-none-linux-gnu-gcc"
 
 [target.aarch64-linux-android]
 linker = "aarch64-linux-android29-clang"
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
