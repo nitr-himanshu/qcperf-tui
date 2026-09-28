@@ -1,3 +1,5 @@
+#[cfg(windows)]
+use std::ffi::c_char;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TryRecvError};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -14,6 +16,41 @@ use crate::model::{Capability, CapabilityRate, MetricInfo, Sample};
 )]
 mod bindings {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+}
+
+// Windows bindgen currently keeps these forward-declared public structs
+// opaque even after their definitions later in qcperf_common.h. Mirror their
+// C layouts here so the Windows ARM64 callback and capability code can read
+// them. Keep these fields in sync with qcperf_common.h.
+#[cfg(windows)]
+#[repr(C)]
+struct QcPerfMetricInfoLayout {
+    metric_id: u16,
+    metric_name: [c_char; bindings::METRIC_NAME_MAX_LEN as usize],
+    metric_name_len: usize,
+    metric_description: [c_char; bindings::MAX_METRIC_DESCRIPTION_LEN as usize],
+    metric_description_len: usize,
+    metric_unit: [c_char; bindings::MAX_METRIC_UNIT_LEN as usize],
+    metric_unit_len: usize,
+}
+
+#[cfg(windows)]
+#[repr(C)]
+struct QcPerfMessageLayout {
+    _backend_id: u8,
+    _capability_id: u8,
+    message: *const c_char,
+    message_length: usize,
+    message_level: i32,
+}
+
+#[cfg(windows)]
+#[repr(C)]
+struct QcPerfDataLayout {
+    backend_id: u8,
+    capability_id: u8,
+    metric_response: *mut bindings::QcPerfMetricResponse,
+    metric_response_len: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -209,10 +246,17 @@ fn copy_capability(backend_id: u8, cap: &bindings::QcPerfCapabilityInfo) -> Capa
     let metrics = if cap.metric_ids_list.is_null() || metric_len == 0 {
         Vec::new()
     } else {
-        unsafe { std::slice::from_raw_parts(cap.metric_ids_list, metric_len) }
-            .iter()
-            .map(copy_metric)
-            .collect()
+        #[cfg(windows)]
+        let records = unsafe {
+            std::slice::from_raw_parts(
+                cap.metric_ids_list.cast::<QcPerfMetricInfoLayout>(),
+                metric_len,
+            )
+        };
+        #[cfg(not(windows))]
+        let records = unsafe { std::slice::from_raw_parts(cap.metric_ids_list, metric_len) };
+
+        records.iter().map(copy_metric).collect()
     };
     Capability {
         backend_id,
@@ -224,6 +268,17 @@ fn copy_capability(backend_id: u8, cap: &bindings::QcPerfCapabilityInfo) -> Capa
     }
 }
 
+#[cfg(windows)]
+fn copy_metric(metric: &QcPerfMetricInfoLayout) -> MetricInfo {
+    MetricInfo {
+        metric_id: metric.metric_id,
+        name: copy_text(&metric.metric_name, metric.metric_name_len),
+        description: copy_text(&metric.metric_description, metric.metric_description_len),
+        unit: copy_text(&metric.metric_unit, metric.metric_unit_len),
+    }
+}
+
+#[cfg(not(windows))]
 fn copy_metric(metric: &bindings::QcPerfMetricInfo) -> MetricInfo {
     MetricInfo {
         metric_id: metric.metric_id,
@@ -280,11 +335,28 @@ unsafe extern "C" fn on_message(
         if message.is_null() {
             return;
         }
+        #[cfg(windows)]
+        let message = &*message.cast::<QcPerfMessageLayout>();
+        #[cfg(not(windows))]
         let message = &*message;
         let level = match message.message_level {
+            #[cfg(windows)]
+            3 => "error",
+            #[cfg(windows)]
+            2 => "warning",
+            #[cfg(windows)]
+            1 => "info",
+            #[cfg(windows)]
+            0 => "debug",
+            #[cfg(windows)]
+            _ => "debug",
+            #[cfg(not(windows))]
             bindings::QcPerfMessageLevel::QC_PERF_MESSAGE_LEVEL_ERROR => "error",
+            #[cfg(not(windows))]
             bindings::QcPerfMessageLevel::QC_PERF_MESSAGE_LEVEL_WARNING => "warning",
+            #[cfg(not(windows))]
             bindings::QcPerfMessageLevel::QC_PERF_MESSAGE_LEVEL_INFO => "info",
+            #[cfg(not(windows))]
             bindings::QcPerfMessageLevel::QC_PERF_MESSAGE_LEVEL_DEBUG => "debug",
         };
         if level == "debug" || level == "info" || message.message.is_null() {
@@ -307,6 +379,9 @@ unsafe fn copy_samples(data: *mut bindings::QcPerfData) -> Option<Vec<Sample>> {
     if data.is_null() {
         return None;
     }
+    #[cfg(windows)]
+    let data = &*data.cast::<QcPerfDataLayout>();
+    #[cfg(not(windows))]
     let data = &*data;
     let count = data.metric_response_len as usize;
     if data.metric_response.is_null() || count == 0 {
