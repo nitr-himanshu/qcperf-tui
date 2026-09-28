@@ -16,8 +16,8 @@ Live view
   x        stop this dashboard only
   e        edit metrics, chart, color, window, and rates
   Tab or Left/Right   switch dashboard (profiling keeps running)
-  PageUp/PageDown     browse charts when the dashboard does not fit
-  Up to four chart panels are shown on each page
+  PageUp/PageDown     select the previous or next chart
+  One chart fills the live view at a time
   c        write the current samples to CSV
   v        toggle appending CSV while this dashboard runs
   p        snapshot to JSON without stopping
@@ -27,7 +27,7 @@ Live view
 Editor
   Up/Down  move focus through metrics
   Space    toggle the focused metric
-  t        cycle chart (pie, line, bar)
+  t        switch chart between line and bar
   c        next color
   w        next time window (15s, 30s, 60s, 5min)
   Left/Right          step the sampling rate
@@ -35,7 +35,7 @@ Editor
   Enter    save
   Esc      cancel
 
-Percent metrics default to a pie of the current value. Other units default to a scrolling line. Rates come from the capability lists libqcperf reported and apply to every graph of that capability.
+Metrics default to a scrolling line, and can be switched to bars. The line axis waits for two samples before choosing a data range. Rates come from the capability lists libqcperf reported and apply to every graph of that capability.
 ";
 
 pub fn render(frame: &mut Frame, area: Rect) {

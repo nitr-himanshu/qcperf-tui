@@ -8,23 +8,24 @@ libqcperf ships in this repo as the git submodule `third_party/libqcperf`. The T
 
 `qcperf-tui` is a dashboard for counters libqcperf already knows how to sample. On launch it calls `qcperf_init`, walks backend ids up to `QC_PERF_BACKEND_MAX`, and keeps every backend that connects. Each capability reports its metrics, units, and the sampling and streaming periods it accepts.
 
-An **Overview** dashboard is created the first time the program runs. Percent metrics open as pies of the current value. Frequencies and every other unit open as scrolling line charts over a time window, in the same spirit as Task Manager. From there you build more dashboards, choose which metrics each one shows, and how each metric is drawn.
+An **Overview** dashboard is created the first time the program runs. Metrics open as scrolling line charts over a time window, in the same spirit as Task Manager. Each dashboard shows one chart at a time, filling the live view; Page Up and Page Down move between selected metrics. In the editor, each chart can be switched between line and bar.
 
 Profiling belongs to the dashboard, not to the screen in front. Switching dashboards leaves the others running. Two dashboards that select the same capability at the same rates share one `qcperf_start`. Stop applies only to the dashboard you are looking at.
 
-The layout follows the terminal size: one column under 60 columns, two up to 119, and three from 120 up.
+The selected chart uses the full terminal view. Its visible sample count follows the available horizontal pixels and chart type.
 
 ## Features
 
 - Live graphs fed by libqcperf data callbacks. Numeric samples are kept; string values are not plotted.
 - Backend discovery from the linked library. The UI does not hard-code CPU, NPU, thermal, or power.
 - Default **Overview** dashboard built from whatever capabilities connected.
-- Custom dashboards. Each metric can be a pie, a line, or a bar.
-- Percent units default to a pie. Several percent metrics from the same capability share one pie. Other units default to a line. `MHz` and `Hz` are lines.
+- Custom dashboards. Each metric can be shown as a line or a bar.
+- Every unit defaults to a line, including percentage metrics. The editor switches between line and bar.
 - Per-capability sampling and streaming rates, chosen only from the lists libqcperf returned for that capability. The rate applies to every graph of that capability.
 - Several dashboards can profile at the same time. Leaving a dashboard does not stop it.
 - Start and stop per dashboard. The last dashboard to stop a shared capability is the one that calls `qcperf_stop`.
-- Rolling history. Each graph has a visible window (15 s, 30 s, 60 s, or 5 min). Samples outside the window scroll off.
+- Rolling history. Each graph has a visible window (15 s, 30 s, 60 s, or 5 min). Samples outside the window scroll off, and new samples enter from the right as history moves left.
+- Line charts wait for two finite samples before setting the y-axis range. The range adjusts to the samples in the visible window.
 - Colors from `colors.toml`, with a per-series override in the editor.
 - CSV export of the current rings, and optional append-while-running.
 - JSON snapshot of the current rings. A snapshot does not stop profiling.
@@ -45,14 +46,14 @@ Press `?` in the list or the live view for the same map.
 | Live view | `s` / `x` | Start / stop this dashboard |
 | Live view | `e` | Edit metrics, chart, color, window, and rates |
 | Live view | Tab, Left, Right | Switch dashboard; profiling continues |
-| Live view | Page Up / Page Down | Browse chart pages when all charts do not fit |
+| Live view | Page Up / Page Down | Select the previous or next chart |
 | Live view | `c` | Write current samples to CSV |
 | Live view | `v` | Toggle appending CSV while this dashboard runs |
 | Live view | `p` | Write a JSON snapshot |
 | Live view | Esc | Back to the list |
 | Editor | Up / Down | Move focus through metrics |
 | Editor | Space | Toggle the focused metric |
-| Editor | `t` | Cycle pie, line, bar |
+| Editor | `t` | Switch between line and bar |
 | Editor | `c` | Next color |
 | Editor | `w` | Next time window |
 | Editor | Left / Right | Step the sampling rate |

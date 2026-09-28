@@ -4,31 +4,28 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::model::capability::Capability;
-use crate::model::unit::is_percent;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChartKind {
-    Pie,
+    #[serde(alias = "Pie")]
     Line,
     Bar,
 }
 
 impl ChartKind {
-    pub fn default_for(unit: &str) -> Self {
-        if is_percent(unit) { Self::Pie } else { Self::Line }
+    pub fn default_for(_unit: &str) -> Self {
+        Self::Line
     }
 
     pub fn next(self) -> Self {
         match self {
-            Self::Pie => Self::Line,
             Self::Line => Self::Bar,
-            Self::Bar => Self::Pie,
+            Self::Bar => Self::Line,
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Pie => "pie",
             Self::Line => "line",
             Self::Bar => "bar",
         }

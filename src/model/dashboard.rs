@@ -5,7 +5,6 @@ use uuid::Uuid;
 
 use crate::model::capability::Capability;
 use crate::model::graph::{default_rate, CapabilityRate, ChartKind, GraphSpec, SeriesColor};
-use crate::model::unit::{is_frequency, is_percent};
 
 pub type DashboardId = Uuid;
 
@@ -51,8 +50,8 @@ impl Dashboard {
         }
     }
 
-    /// One dashboard covering every connected capability. Chart kind follows
-    /// the metric unit. No backend id is special-cased.
+    /// One dashboard covering every connected capability. Every metric starts
+    /// as a line chart and can be changed to bars in the editor.
     pub fn overview(capabilities: &[Capability]) -> Self {
         let mut dashboard = Self::new("Overview");
         let mut color = 0u8;
@@ -62,18 +61,11 @@ impl Dashboard {
             };
             let mut graphs = Vec::new();
             for metric in &capability.metrics {
-                let chart = if is_percent(&metric.unit) {
-                    ChartKind::Pie
-                } else if is_frequency(&metric.unit) {
-                    ChartKind::Line
-                } else {
-                    ChartKind::default_for(&metric.unit)
-                };
                 graphs.push(GraphSpec {
                     backend_id: capability.backend_id,
                     capability_id: capability.capability_id,
                     metric_id: metric.metric_id,
-                    chart,
+                    chart: ChartKind::Line,
                     color: SeriesColor::new(color),
                     window: Duration::from_secs(60),
                 });

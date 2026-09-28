@@ -94,10 +94,10 @@ fn key_hints(app: &App) -> Line<'static> {
     let hint = match app.screen() {
         crate::app::Screen::List => "↑/↓ select  Enter open  n new  d delete  ? help  q quit",
         crate::app::Screen::View => {
-            "s start  x stop  e edit  c CSV  p snapshot  PgUp/Dn charts  Tab/←/→ dashboards"
+            "s start  x stop  e edit  c CSV  p snapshot  PgUp/Dn chart  Tab/←/→ dashboards"
         }
         crate::app::Screen::Edit => {
-            "↑/↓ focus  Space toggle  t chart  c color  w window  ←/→ sample  Enter save"
+            "↑/↓ focus  Space toggle  t line/bar  c color  w window  ←/→ sample  Enter save"
         }
         crate::app::Screen::Help => "Esc back",
     };

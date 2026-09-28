@@ -238,7 +238,7 @@ impl App {
         let next = (self.view_page as i32 + direction).clamp(0, pages as i32 - 1) as usize;
         if next != self.view_page {
             self.view_page = next;
-            self.status = format!("chart page {} of {pages}", next + 1);
+            self.status = format!("chart {} of {pages}", next + 1);
         }
     }
 

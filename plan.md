@@ -7,7 +7,7 @@ This plan interprets `Requirement.md` as follows:
 - On startup the TUI calls `qcperf_init`, connects each backend compiled into the library, and reads capabilities with `qcperf_get_capabilities_info`.
 - A built-in dashboard shows CPU use and other common metrics that those capabilities actually expose.
 - The user can create more dashboards, pick metrics, and pick how each metric is drawn.
-- Percentage metrics default to a pie (current share). Frequency and other units (MHz and similar) default to a time-series line or bar, in the style of Windows Task Manager: a rolling window of recent samples, not a single number.
+- Metrics default to a time-series line chart, and the editor lets the user choose line or bar for each metric. Charts show a rolling window of recent samples.
 - Each capability’s sampling rate and streaming rate are chosen from the discrete millisecond lists libqcperf returns on `QcPerfCapabilityInfo`.
 - Every dashboard has Edit, Start, Stop, Snapshot, and Save CSV.
 - Leaving a dashboard does not stop it. Two or more dashboards may profile together.
@@ -59,7 +59,7 @@ The TUI follows that. It does not list backend names, ids, or metric schemas in 
 - `build.rs` does not pass `-DBACKENDS`. libqcperf then compiles every backend that platform supports, including ones added later in `BuildConfig.cmake`. Set the environment variable `QCPERF_BACKENDS` (for example `CPU;NPU`) only to narrow a local build. That variable is forwarded as `-DBACKENDS` and is not read by UI code.
 - `QcPerf::init` loops `0..QC_PERF_BACKEND_MAX` from the binding generated out of the submodule header. It connects each id, skips `INVALID_BACKEND_ID`, and copies `QcPerfBackendInfo`. There is no `match` on `QC_PERF_BACKEND_QCOM_LINUX_CPU` or any other variant.
 - `build.rs` runs bindgen on every build against the submodule headers, so a new enumerator inserted before `QC_PERF_BACKEND_MAX` is picked up by the next compile. No checked-in backend table.
-- The editor, default dashboard, pies, lines, and bars read only `capability_name`, `metric_name`, `metric_unit`, and the sampling and streaming arrays. They never branch on which backend produced the record.
+- The editor, default dashboard, lines, and bars read only `capability_name`, `metric_name`, `metric_unit`, and the sampling and streaming arrays. They never branch on which backend produced the record.
 - Labels in the UI are the capability name plus the numeric `backend_id`. There is no Rust map from id to "CPU" or "NPU". When libqcperf adds a name field on `QcPerfBackendInfo`, the wrapper copies it; until then the capability name is the label.
 
 Adding a backend inside libqcperf (enum slot, `backend_init_fns` entry, `BuildConfig.cmake` platform list) and rebuilding this repo is enough. Rust source changes only if `qcperf.h` itself changes shape: new request fields, a new callback signature, or a new value type in `QcPerfGenericType`.
@@ -127,7 +127,6 @@ qcperf-tui/
       editor.rs
       help.rs
       widgets/
-        pie.rs
         line_chart.rs
         bar_chart.rs
     export/
@@ -263,7 +262,8 @@ Dashboard List
 
 Live view
   header: name, Running/Stopped, capability rates
-  body: responsive grid of graphs
+  body: one selected graph filling the view
+  PageUp/PageDown moves between selected metrics
   e edit
   s start, x stop
   p snapshot, c export CSV
@@ -280,32 +280,23 @@ Editor
 
 Color-only and window-only edits apply immediately to a running dashboard. A rate change on a live capability is saved but applied only after Stop and Start, and only if no other running dashboard still holds the old session.
 
-### Scalable grid
+### Single-chart live view
 
-`ratatui::layout::Layout` is recomputed every frame from `terminal.size()`:
+The selected metric fills the live view. PageUp/PageDown selects another metric when the dashboard contains multiple graphs. The selected chart redraws at the available terminal size.
 
-| Terminal width | Columns |
-|---|---|
-| < 60 | 1 |
-| 60–119 | 2 |
-| >= 120 | 3 |
-
-Show at most four chart panels on one page. Four panels use a balanced two-column grid when the terminal is wide enough, and stack on narrow terminals; smaller counts use the available width. The page capacity is based on terminal width and a minimum chart height, so narrow or short terminals show fewer charts and PageUp/PageDown browses the rest. Dashboard size stays independent from page size.
-
-Each cell shows the metric name, the latest finite value with its unit string, and the chart. Empty or invalid-only series say `no data`. Non-finite samples are omitted from plotted data and axis bounds, which always remain finite. A pie is the current value. When several percent metrics from one capability are selected together (for example per-core CPU), they share one pie with one slice each. Pie sectors use half-block pixels to keep the disc circular at terminal cell aspect ratios; the legend shows each slice’s share and reading. Line and bar charts plot that metric’s ring across `window`. The axis label shows the window (for example `60s`) and the unit. Resizing redraws on the next frame.
+Charts show the latest finite reading and unit. Line charts wait for two finite samples before showing data and setting a padded y range from samples in the visible window. Non-finite samples are omitted. The line history is positioned by sample age in the configured time window, so each new sample enters from the right and older values move left. The line chart compresses its sample data to the available Braille pixel count. Bar charts divide the full visible history into as many buckets as fit at three terminal columns per bar. Both charts show the window and unit.
 
 ### UI refinement and scaling plan
 
 1. **Make chart readings reliable.** Keep sample sanitization, finite axis bounds, explicit latest readings, and a clear empty state inside the chart widgets. This is the current fix for unusable ranges and blank-looking graphs.
-2. **Keep layouts predictable.** Compute page capacity and cell rectangles from the same width/height policy. Keep four as a named page limit; retain all selected charts in the dashboard and use paging for overflow. Keep the four-panel layout balanced instead of leaving a single chart on a second row.
+2. **Keep layouts predictable.** Show one selected chart in the live view and size its sample count to the available horizontal pixels.
 3. **Keep chart types replaceable.** Each chart widget owns its drawing and presentation, while `view.rs` supplies prepared metric labels, units, colors, windows, and samples. New chart types should join this dispatch and reuse the shared layout policy without adding backend-specific logic.
-4. **Refine presentation in small steps.** Once the readings and geometry are stable, improve consistent titles, legends, empty states, and color contrast across pie, line, and bar charts. Keep palette choices in the theme and keep layout thresholds and page limits centralized so later user-configurable density does not spread through the widgets.
+4. **Refine presentation in small steps.** Keep titles, empty states, and color contrast consistent across line and bar charts. Keep palette choices in the theme.
 
 ### Charts
 
-- **Pie** (`ui/widgets/pie.rs`): custom `Widget`, Unicode block sectors, legend with name and value.
-- **Line** (`ui/widgets/line_chart.rs`): `ratatui::widgets::Chart` over the ring. Y is `0..=100` when the unit is percent; otherwise padded min/max of the window. X is time.
-- **Bar** (`ui/widgets/bar_chart.rs`): `BarChart` of the last N buckets in the window. Bucket count follows the cell width.
+- **Line** (`ui/widgets/line_chart.rs`): `ratatui::widgets::Chart` over the ring. After two finite samples, Y is the padded min/max of values in the window. X is time; visible data is sampled to fit horizontal Braille pixels.
+- **Bar** (`ui/widgets/bar_chart.rs`): `BarChart` buckets of all visible samples. Bucket count follows available chart width and bar spacing.
 
 Default series colors come from `theme.rs`. The editor writes an override into `GraphSpec.color`. `colors.toml` replaces the palette.
 
@@ -313,9 +304,7 @@ Default series colors come from `theme.rs`. The editor writes an override into `
 
 If the user has no saved file, build a dashboard named `Overview` from every capability that connected, whichever backends those are:
 
-- metrics whose unit is `%` or contains `percent`, as pie slices grouped by capability
-- metrics whose unit is `MHz` or `Hz`, as 60s line charts
-- any other numeric metric, as a line chart with `ChartKind::default_for`
+- every numeric metric as a 60s line chart
 
 Nothing in this factory compares `backend_id` to a CPU, NPU, thermal, or power constant. A backend added in libqcperf contributes its metrics on the next launch.
 
@@ -372,7 +361,7 @@ Init failure is drawn on the list screen with the string from `qcperf_get_error_
 
 - Implement `unit` helpers, `capability`, `graph`, `dashboard`, `sample`.
 - `SampleRing` with push, window trim, and CSV rows.
-- Tests: rate not in the capability list, streaming shorter than sampling, pie-vs-line default from `%` and `MHz`, ring trim at the window edge.
+- Tests: rate not in the capability list, streaming shorter than sampling, line default for every unit, ring trim at the window edge.
 
 ### 3. FFI session layer
 
@@ -389,12 +378,13 @@ Init failure is drawn on the list screen with the string from `qcperf_get_error_
 - Screens: dashboard list and a live view that shows metric names and the latest number.
 - Keys: navigation, start, stop, switch dashboard, quit with stop-all, disconnect, deinit.
 
-### 5. Chart widgets and responsive grid
+### 5. Chart widgets and single-chart view
 
-- Pie, line, and bar widgets fed by `SampleRing`.
-- Grid column rule from terminal width.
+- Line and bar widgets fed by `SampleRing`.
+- One selected chart fills the live view; PageUp/PageDown switches between selected metrics.
 - Default `Overview` dashboard factory from capability units across every connected backend.
-- On device: resize the terminal and confirm cells reflow; let a line chart run longer than its window and confirm it scrolls.
+- The sample count follows the plot's pixel count divided by the per-sample pixel width.
+- Line charts set their y range after two finite samples and scroll older samples left as new ones arrive.
 
 ### 6. Editor
 
@@ -427,14 +417,14 @@ cargo build --target aarch64-pc-windows-msvc
 
 - Launch calls `qcperf_init`, connects every id below `QC_PERF_BACKEND_MAX` that the linked library accepts, and lists those capabilities (or shows `qcperf_get_error_info` text).
 - Enabling another backend in libqcperf and rebuilding does not require a Rust change. The new capability appears in the editor and on `Overview`.
-- Default dashboard Starts and shows percent metrics as pies and MHz metrics as scrolling lines, from every connected backend.
+- Default dashboard Starts with scrolling lines for metrics from every connected backend; the editor can switch any chart to bars.
 - A second dashboard can Start while the first keeps updating after focus moves.
 - Two dashboards on the same capability and the same rates produce one `qcperf_start`.
 - Stop affects only the selected dashboard and calls `qcperf_stop` only when it was the last subscriber.
 - The editor offers only sampling and streaming values from that capability’s arrays.
 - Snapshot and CSV files contain the selected metrics and do not stop streaming.
 - Colors change from the editor and from `colors.toml`.
-- Narrow and wide terminals both show every graph, reflowed.
+- One graph fills the view, and PageUp/PageDown selects every metric in the dashboard.
 - `cargo test` passes.
 - Release builds exist for `aarch64-unknown-linux-gnu`, `aarch64-linux-android`, and `aarch64-pc-windows-msvc`, each linked to libqcperf built from `third_party/libqcperf`.
 

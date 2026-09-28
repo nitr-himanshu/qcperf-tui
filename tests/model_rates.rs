@@ -57,9 +57,9 @@ fn accepts_listed_rates() {
 }
 
 #[test]
-fn pie_is_the_default_for_percent_and_line_for_mhz() {
-    assert_eq!(ChartKind::default_for("%"), ChartKind::Pie);
-    assert_eq!(ChartKind::default_for("percent"), ChartKind::Pie);
+fn line_is_the_default_for_every_unit() {
+    assert_eq!(ChartKind::default_for("%"), ChartKind::Line);
+    assert_eq!(ChartKind::default_for("percent"), ChartKind::Line);
     assert_eq!(ChartKind::default_for("MHz"), ChartKind::Line);
 }
 
